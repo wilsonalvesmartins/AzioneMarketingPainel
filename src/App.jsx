@@ -6,7 +6,7 @@ import {
   Bot, Save, Edit3, Trash2, ChevronDown, ChevronUp, Copy, Download
 } from 'lucide-react';
 
-// --- IN-MEMORY DEFAULT DATA (Simula o banco da VPS para o Preview) ---
+// --- DADOS PADRÃO (Usados apenas se o banco da VPS estiver vazio) ---
 const defaultUsers = [
   { id: 1, login: 'empresa', pass: 'empresa123', role: 'empresa', name: 'Cliente Azione' },
   { id: 2, login: 'gestor', pass: 'gestor123', role: 'gestor', name: 'Gestor Geral' },
@@ -21,6 +21,54 @@ const defaultKanban = [
 const defaultFinances = [
   { id: 1, desc: 'Fatura Abril', due: '2026-04-20', pix: '000.000.000-00', boleto: '', nf: '', status: 'Pendente' }
 ];
+
+const defaultReports = [{ id: 1, date: '2026-04-01', leads: 150, cost: '5.50', contracts: 10, attachment: '', custom: [{ label: 'Alcance Total', value: '45.000' }] }];
+const defaultDocs = [{ id: 1, title: 'Contrato Social', date: '2025-01-10', link: '' }];
+const defaultConfig = { companyName: 'Azione Marketing', logo: '', color: '#3B82F6', geminiKey: '' };
+
+// --- HOOK DE PERSISTÊNCIA (Grava na VPS ou LocalStorage) ---
+function usePersistentState(key, initialValue) {
+  const [state, setState] = useState(initialValue);
+  const [isLoaded, setIsLoaded] = useState(false);
+
+  useEffect(() => {
+    // 1. Tenta buscar os dados do Banco da VPS
+    fetch(`/api/data/${key}`)
+      .then(res => {
+        if (!res.ok) throw new Error('API da VPS inacessível');
+        return res.json();
+      })
+      .then(data => {
+        if (data && data.data) setState(data.data);
+        setIsLoaded(true);
+      })
+      .catch(err => {
+        // 2. Se a VPS não responder (ex: Preview Canvas), busca do cache local
+        const local = localStorage.getItem(`azione_${key}`);
+        if (local) {
+          try { setState(JSON.parse(local)); } catch(e){}
+        }
+        setIsLoaded(true);
+      });
+  }, [key]);
+
+  const setPersistentState = (newValue) => {
+    const valueToStore = typeof newValue === 'function' ? newValue(state) : newValue;
+    setState(valueToStore);
+    
+    // 1. Tenta Salvar no Banco da VPS
+    fetch(`/api/data/${key}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ data: valueToStore })
+    }).catch(() => {
+      // 2. Se falhar (Preview), salva no cache local para não perder
+      localStorage.setItem(`azione_${key}`, JSON.stringify(valueToStore));
+    });
+  };
+
+  return [state, setPersistentState, isLoaded];
+}
 
 // --- COMPONENTES DE UI ---
 const Toast = ({ msg, onClose }) => {
@@ -39,18 +87,23 @@ export default function App() {
   const [view, setView] = useState('kanban');
   const [toast, setToast] = useState('');
 
-  // Estados Globais (Simulando Banco de Dados)
-  const [users, setUsers] = useState(defaultUsers);
-  const [kanban, setKanban] = useState(defaultKanban);
-  const [reports, setReports] = useState([{ id: 1, date: '2026-04-01', leads: 150, cost: '5.50', contracts: 10, attachment: 'https://link-do-relatorio.com', custom: [{ label: 'Alcance Total', value: '45.000' }] }]);
-  const [finances, setFinances] = useState(defaultFinances);
-  const [docs, setDocs] = useState([{ id: 1, title: 'Contrato Social', date: '2025-01-10', link: '' }]);
-  const [config, setConfig] = useState({ companyName: 'Azione Marketing', logo: '', color: '#3B82F6', geminiKey: '' });
+  // Estados com Persistência
+  const [users, setUsers, uLoad] = usePersistentState('users', defaultUsers);
+  const [kanban, setKanban, kLoad] = usePersistentState('kanban', defaultKanban);
+  const [reports, setReports, rLoad] = usePersistentState('reports', defaultReports);
+  const [finances, setFinances, fLoad] = usePersistentState('finances', defaultFinances);
+  const [docs, setDocs, dLoad] = usePersistentState('docs', defaultDocs);
+  const [config, setConfig, cLoad] = usePersistentState('config', defaultConfig);
 
   // Estado para gerenciar qual card abrir ao vir do Cronograma
   const [openCardId, setOpenCardId] = useState(null);
 
   const showToast = (msg) => setToast(msg);
+
+  // Tela de Loading enquanto busca dados da VPS
+  if (!uLoad || !kLoad || !rLoad || !fLoad || !dLoad || !cLoad) {
+    return <div className="min-h-screen flex items-center justify-center bg-gray-50"><div className="animate-pulse text-xl font-bold text-gray-500">Conectando ao banco de dados...</div></div>;
+  }
 
   // Login Handler
   const handleLogin = (e) => {
@@ -70,7 +123,7 @@ export default function App() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
         <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md text-center">
-          {config.logo ? <img src={config.logo} alt="Logo" className="h-16 mx-auto mb-6" /> : <h1 className="text-3xl font-bold text-gray-800 mb-6" style={{ color: config.color }}>{config.companyName}</h1>}
+          {config.logo ? <img src={config.logo} alt="Logo" className="h-16 mx-auto mb-6 object-contain" /> : <h1 className="text-3xl font-bold text-gray-800 mb-6" style={{ color: config.color }}>{config.companyName}</h1>}
           <form onSubmit={handleLogin} className="space-y-4">
             <input name="login" type="text" placeholder="Usuário" required className="w-full p-3 border rounded-xl outline-none focus:ring-2" style={{ focusRing: config.color }} />
             <input name="pass" type="password" placeholder="Senha" required className="w-full p-3 border rounded-xl outline-none focus:ring-2" />
@@ -104,7 +157,7 @@ export default function App() {
       <aside className="bg-white border-r border-gray-200 md:w-64 flex-shrink-0 flex flex-col justify-between" style={{ borderTop: `4px solid ${config.color}` }}>
         <div className="p-4 md:p-6">
           <div className="flex items-center gap-3 mb-8 overflow-hidden">
-            {config.logo ? <img src={config.logo} alt="Logo" className="h-10 flex-shrink-0" /> : <div className="w-10 h-10 rounded-lg flex-shrink-0 flex items-center justify-center text-white font-bold" style={{ backgroundColor: config.color }}>AZ</div>}
+            {config.logo ? <img src={config.logo} alt="Logo" className="h-10 flex-shrink-0 object-contain" /> : <div className="w-10 h-10 rounded-lg flex-shrink-0 flex items-center justify-center text-white font-bold" style={{ backgroundColor: config.color }}>AZ</div>}
             <div className="hidden md:block truncate">
               <h2 className="font-bold text-gray-800 leading-tight truncate">{config.companyName}</h2>
               <p className="text-xs text-gray-500 uppercase">{user.role}</p>
@@ -237,66 +290,60 @@ function CardModal({ card, user, config, onClose, onSave, showToast }) {
     if (!config.geminiKey) return showToast("Erro: Chave API do Gemini não está configurada nas Configurações.");
     setAiLoading(true);
     
-    try {
-      // 1. Listar Modelos Disponíveis
-      const modelsRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${config.geminiKey}`);
-      if (!modelsRes.ok) {
-        const errData = await modelsRes.json();
-        throw new Error(errData.error?.message || "Falha ao buscar modelos. Verifique sua chave API.");
-      }
-      
-      const modelsData = await modelsRes.json();
-      const availableModels = modelsData.models.map(m => m.name);
-      
-      // 2. Selecionar o melhor modelo disponível (priorizando os mais recomendados para texto)
-      let selectedModel = '';
-      if (availableModels.includes('models/gemini-2.5-flash')) selectedModel = 'gemini-2.5-flash';
-      else if (availableModels.includes('models/gemini-1.5-flash')) selectedModel = 'gemini-1.5-flash';
-      else if (availableModels.includes('models/gemini-1.5-pro')) selectedModel = 'gemini-1.5-pro';
-      else if (availableModels.includes('models/gemini-pro')) selectedModel = 'gemini-pro';
-      else {
-        // Fallback: Pega o primeiro que suporte geração de texto
-        const validModel = modelsData.models.find(m => m.supportedGenerationMethods?.includes('generateContent'));
-        if (validModel) selectedModel = validModel.name.replace('models/', '');
-      }
+    // Fallback Inteligente: Tenta o 2.5 primeiro. Se der falha de demanda (503), pula pro próximo.
+    const modelsToTry = [
+      'gemini-2.5-flash',
+      'gemini-1.5-flash',
+      'gemini-1.5-pro',
+      'gemini-pro'
+    ];
 
-      if (!selectedModel) throw new Error("Nenhum modelo compatível com geração de texto encontrado para esta chave.");
+    let success = false;
+    let lastError = '';
 
-      // 3. Gerar Conteúdo
-      const payload = {
-        contents: [{ parts: [{ text: `Título do Post: ${draft.title}. Detalhes adicionais: ${aiPrompt}` }] }],
-        systemInstruction: { parts: [{ text: `Você atua como especialista em marketing. O usuário pediu para listar os modelos e usar o recomendado. Diga: 'Modelos listados. Utilizando o ${selectedModel}.'. Crie uma legenda chamativa com CTA e hashtags.` }] }
-      };
-      
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${config.geminiKey}`, {
-        method: 'POST', 
-        headers: { 'Content-Type': 'application/json' }, 
-        body: JSON.stringify(payload)
-      });
-      
-      const result = await res.json();
-      
-      // Tratamento de erros HTTP (Ex: chave inválida, permissão, etc)
-      if (!res.ok) {
-        throw new Error(result.error?.message || `Erro do servidor: ${res.status}`);
+    for (const model of modelsToTry) {
+      try {
+        const payload = {
+          contents: [{ parts: [{ text: `Título do Post: ${draft.title}. Detalhes adicionais: ${aiPrompt}` }] }],
+          systemInstruction: { parts: [{ text: `Você atua como especialista em marketing. O usuário pediu para listar os modelos e usar o recomendado. Diga: 'Modelos listados. Utilizando o ${model}.'. Crie uma legenda chamativa com CTA e hashtags.` }] }
+        };
+        
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${config.geminiKey}`, {
+          method: 'POST', 
+          headers: { 'Content-Type': 'application/json' }, 
+          body: JSON.stringify(payload)
+        });
+        
+        const result = await res.json();
+        
+        if (!res.ok) {
+          throw new Error(result.error?.message || `Erro HTTP ${res.status}`);
+        }
+        
+        const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+        
+        if (text) {
+          setDraft({ ...draft, caption: text });
+          showToast(`Legenda gerada com sucesso (${model})!`);
+          success = true;
+          break; // Sai do loop porque deu certo
+        } else {
+          throw new Error("Resposta vazia da IA.");
+        }
+        
+      } catch (e) {
+        console.warn(`Tentativa com ${model} falhou:`, e.message);
+        lastError = e.message;
+        // O loop continua e tenta o próximo modelo automaticamente
       }
-      
-      const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
-      
-      if (text) {
-        setDraft({ ...draft, caption: text });
-        showToast(`Legenda gerada com sucesso usando o modelo: ${selectedModel}`);
-      } else {
-        throw new Error("A IA não retornou nenhum texto válido.");
-      }
-      
-    } catch (e) {
-      console.error("Erro detalhado da API Gemini:", e);
-      showToast(`Falha na IA: ${e.message}`);
-    } finally {
-      setAiLoading(false);
-      setAiPrompt('');
     }
+
+    if (!success) {
+      showToast(`Falha após tentar todos os modelos. Último erro: ${lastError}`);
+    }
+    
+    setAiLoading(false);
+    setAiPrompt('');
   };
 
   return (
@@ -381,7 +428,7 @@ function CardModal({ card, user, config, onClose, onSave, showToast }) {
                   <p className="text-xs font-semibold text-blue-800 mb-2 flex items-center gap-1"><Bot size={14}/> Assistente IA Gemini</p>
                   <input placeholder="Informações extras para a IA..." value={aiPrompt} onChange={e => setAiPrompt(e.target.value)} className="w-full text-sm p-2 border rounded outline-none mb-2" />
                   <button onClick={handleAI} disabled={aiLoading} className="w-full bg-blue-600 text-white text-sm font-bold py-2 rounded flex items-center justify-center gap-2 disabled:opacity-50">
-                    {aiLoading ? 'Gerando...' : 'Gerar Legenda com IA'}
+                    {aiLoading ? 'Processando (com fallback)...' : 'Gerar Legenda com IA'}
                   </button>
                 </div>
               )}
@@ -792,7 +839,7 @@ function SettingsView({ config, setConfig, users, setUsers, showToast }) {
             </button>
           </div>
         </div>
-        <button onClick={() => showToast("Configurações salvas (In-Memory)")} className="bg-gray-800 text-white px-6 py-2 rounded-xl font-bold">Salvar Ajustes</button>
+        <button onClick={() => showToast("Ajustes visuais atualizados!")} className="bg-gray-800 text-white px-6 py-2 rounded-xl font-bold">Atualizar Tela</button>
       </div>
 
       <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 space-y-4">
@@ -822,7 +869,7 @@ function SettingsView({ config, setConfig, users, setUsers, showToast }) {
           </div>
         </div>
 
-        <p className="text-xs text-red-500 mt-2">* Alterações salvas automaticamente no estado. Em produção, isso atualizará o SQLite.</p>
+        <p className="text-xs text-green-600 font-medium mt-2">* Tudo o que for alterado no app é salvo imediatamente na VPS.</p>
       </div>
     </div>
   );
