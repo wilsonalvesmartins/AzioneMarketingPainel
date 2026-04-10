@@ -28,7 +28,27 @@ db.serialize(() => {
     db.run(`CREATE TABLE IF NOT EXISTS data_store (key TEXT PRIMARY KEY, value JSON)`);
 });
 
-// Rota coringa: Envia o React App para qualquer URL acessada
+// --- ROTAS DA API PARA PERSISTÊNCIA DE DADOS ---
+
+// Rota para buscar dados do banco
+app.get('/api/data/:key', (req, res) => {
+    db.get("SELECT value FROM data_store WHERE key = ?", [req.params.key], (err, row) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(row ? JSON.parse(row.value) : null);
+    });
+});
+
+// Rota para salvar ou atualizar dados no banco
+app.post('/api/data/:key', (req, res) => {
+    db.run(`INSERT OR REPLACE INTO data_store (key, value) VALUES (?, ?)`, 
+    [req.params.key, JSON.stringify(req.body)], (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true });
+    });
+});
+
+// --- ROTA CORINGA PARA O REACT (SPA) ---
+// Qualquer rota não reconhecida acima será direcionada para o index.html do React
 app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
