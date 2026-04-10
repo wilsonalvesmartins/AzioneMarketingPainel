@@ -1,0 +1,10 @@
+version: '3.8'
+services:
+  azione-app:
+    build: .
+    container_name: azione-marketing-app
+    restart: unless-stopped
+    ports:
+      - "80:3000"
+    volumes:
+      - ./data:/app/data
