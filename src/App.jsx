@@ -24,11 +24,11 @@ const defaultFinances = [
 
 // --- COMPONENTES DE UI ---
 const Toast = ({ msg, onClose }) => {
-  useEffect(() => { const timer = setTimeout(onClose, 3000); return () => clearTimeout(timer); }, [onClose]);
+  useEffect(() => { const timer = setTimeout(onClose, 5000); return () => clearTimeout(timer); }, [onClose]);
   return (
-    <div className="fixed bottom-4 right-4 bg-gray-800 text-white px-6 py-3 rounded-xl shadow-2xl flex items-center gap-3 z-50 animate-bounce">
+    <div className="fixed bottom-4 right-4 bg-gray-800 text-white px-6 py-3 rounded-xl shadow-2xl flex items-center gap-3 z-50 animate-bounce max-w-md">
       <span className="text-sm font-medium">{msg}</span>
-      <button onClick={onClose} className="hover:text-gray-300"><X size={16} /></button>
+      <button onClick={onClose} className="hover:text-gray-300 flex-shrink-0"><X size={16} /></button>
     </div>
   );
 };
@@ -234,22 +234,65 @@ function CardModal({ card, user, config, onClose, onSave, showToast }) {
   };
 
   const handleAI = async () => {
-    if (!config.geminiKey) return showToast("Chave API do Gemini não configurada.");
+    if (!config.geminiKey) return showToast("Erro: Chave API do Gemini não está configurada nas Configurações.");
     setAiLoading(true);
+    
     try {
+      // 1. Listar Modelos Disponíveis
+      const modelsRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${config.geminiKey}`);
+      if (!modelsRes.ok) {
+        const errData = await modelsRes.json();
+        throw new Error(errData.error?.message || "Falha ao buscar modelos. Verifique sua chave API.");
+      }
+      
+      const modelsData = await modelsRes.json();
+      const availableModels = modelsData.models.map(m => m.name);
+      
+      // 2. Selecionar o melhor modelo disponível (priorizando os mais recomendados para texto)
+      let selectedModel = '';
+      if (availableModels.includes('models/gemini-2.5-flash')) selectedModel = 'gemini-2.5-flash';
+      else if (availableModels.includes('models/gemini-1.5-flash')) selectedModel = 'gemini-1.5-flash';
+      else if (availableModels.includes('models/gemini-1.5-pro')) selectedModel = 'gemini-1.5-pro';
+      else if (availableModels.includes('models/gemini-pro')) selectedModel = 'gemini-pro';
+      else {
+        // Fallback: Pega o primeiro que suporte geração de texto
+        const validModel = modelsData.models.find(m => m.supportedGenerationMethods?.includes('generateContent'));
+        if (validModel) selectedModel = validModel.name.replace('models/', '');
+      }
+
+      if (!selectedModel) throw new Error("Nenhum modelo compatível com geração de texto encontrado para esta chave.");
+
+      // 3. Gerar Conteúdo
       const payload = {
         contents: [{ parts: [{ text: `Título do Post: ${draft.title}. Detalhes adicionais: ${aiPrompt}` }] }],
-        systemInstruction: { parts: [{ text: "Você atua como especialista em marketing. O usuário pediu para listar os modelos e usar o recomendado. Diga: 'Modelos listados. Utilizando o gemini-2.5-flash-preview.'. Crie uma legenda chamativa com CTA e hashtags." }] }
+        systemInstruction: { parts: [{ text: `Você atua como especialista em marketing. O usuário pediu para listar os modelos e usar o recomendado. Diga: 'Modelos listados. Utilizando o ${selectedModel}.'. Crie uma legenda chamativa com CTA e hashtags.` }] }
       };
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${config.geminiKey}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${config.geminiKey}`, {
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify(payload)
       });
+      
       const result = await res.json();
+      
+      // Tratamento de erros HTTP (Ex: chave inválida, permissão, etc)
+      if (!res.ok) {
+        throw new Error(result.error?.message || `Erro do servidor: ${res.status}`);
+      }
+      
       const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (text) setDraft({ ...draft, caption: text });
-      showToast("Legenda gerada com sucesso!");
+      
+      if (text) {
+        setDraft({ ...draft, caption: text });
+        showToast(`Legenda gerada com sucesso usando o modelo: ${selectedModel}`);
+      } else {
+        throw new Error("A IA não retornou nenhum texto válido.");
+      }
+      
     } catch (e) {
-      showToast("Erro ao comunicar com a IA.");
+      console.error("Erro detalhado da API Gemini:", e);
+      showToast(`Falha na IA: ${e.message}`);
     } finally {
       setAiLoading(false);
       setAiPrompt('');
@@ -684,6 +727,7 @@ function DocsView({ data, setData, user, config }) {
 
 function SettingsView({ config, setConfig, users, setUsers, showToast }) {
   const [newUser, setNewUser] = useState({ login: '', pass: '', role: 'empresa', name: '' });
+  const [testingApi, setTestingApi] = useState(false);
 
   const handleAddUser = () => {
     if(!newUser.login || !newUser.pass) return showToast("Preencha login e senha!");
@@ -696,6 +740,24 @@ function SettingsView({ config, setConfig, users, setUsers, showToast }) {
     if(users.length <= 1) return showToast("Não é possível apagar o último usuário.");
     setUsers(users.filter(u => u.id !== id));
     showToast("Usuário removido.");
+  };
+
+  const handleTestApi = async () => {
+    if (!config.geminiKey) return showToast("Insira a chave da API antes de testar.");
+    setTestingApi(true);
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${config.geminiKey}`);
+      const data = await res.json();
+      if (res.ok && data.models) {
+        showToast(`✅ Chave validada! ${data.models.length} modelos disponíveis.`);
+      } else {
+        throw new Error(data.error?.message || "Erro desconhecido ao validar a chave.");
+      }
+    } catch (err) {
+      showToast(`❌ Erro na chave: ${err.message}`);
+    } finally {
+      setTestingApi(false);
+    }
   };
 
   return (
@@ -723,7 +785,12 @@ function SettingsView({ config, setConfig, users, setUsers, showToast }) {
         </div>
         <div>
           <label className="text-sm font-semibold text-gray-600 block mb-1">Chave API (Gemini IA)</label>
-          <input type="password" value={config.geminiKey} onChange={e => setConfig({...config, geminiKey: e.target.value})} className="w-full p-3 border rounded-xl outline-none" placeholder="AIzaSy..." />
+          <div className="flex gap-2">
+            <input type="password" value={config.geminiKey} onChange={e => setConfig({...config, geminiKey: e.target.value})} className="flex-1 p-3 border rounded-xl outline-none" placeholder="AIzaSy..." />
+            <button onClick={handleTestApi} disabled={testingApi} className="bg-gray-100 text-gray-700 px-4 rounded-xl font-bold border hover:bg-gray-200 disabled:opacity-50 transition-colors">
+              {testingApi ? 'Testando...' : 'Testar Chave'}
+            </button>
+          </div>
         </div>
         <button onClick={() => showToast("Configurações salvas (In-Memory)")} className="bg-gray-800 text-white px-6 py-2 rounded-xl font-bold">Salvar Ajustes</button>
       </div>
