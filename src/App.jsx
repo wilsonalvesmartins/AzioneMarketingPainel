@@ -47,12 +47,28 @@ function usePersistentState(key, initialValue) {
     fetch(`/api/data/${key}`)
       .then(res => { if (!res.ok) throw new Error(); return res.json(); })
       .then(data => {
-        if (data && data.data) setState({ ...initialValue, ...data.data }); // Merge config antiga com a nova
+        if (data && data.data) {
+          // CORREÇÃO CRÍTICA: Garante que Arrays (Listas) não sejam convertidos em objetos
+          if (Array.isArray(data.data)) {
+            setState(data.data);
+          } else if (typeof data.data === 'object' && data.data !== null) {
+            setState({ ...initialValue, ...data.data }); 
+          } else {
+            setState(data.data);
+          }
+        }
         setIsLoaded(true);
       })
       .catch(err => {
         const local = localStorage.getItem(`azione_${key}`);
-        if (local) { try { setState({ ...initialValue, ...JSON.parse(local) }); } catch(e){} }
+        if (local) { 
+          try { 
+            const parsed = JSON.parse(local);
+            if (Array.isArray(parsed)) setState(parsed);
+            else if (typeof parsed === 'object' && parsed !== null) setState({ ...initialValue, ...parsed });
+            else setState(parsed);
+          } catch(e){} 
+        }
         setIsLoaded(true);
       });
   }, [key]);
@@ -570,7 +586,13 @@ function TrafficView({ data, setData, user, config, showToast }) {
       {activeTab === 'looker' && (
         <div className="flex-1 bg-white rounded-3xl shadow-sm border border-gray-200/50 overflow-hidden flex flex-col min-h-[600px]">
           {config.lookerStudioUrl ? (
-            <iframe src={getEmbedUrl(config.lookerStudioUrl)} frameBorder="0" style={{ border: 0 }} allowFullScreen className="w-full h-full flex-1 min-h-[700px]"></iframe>
+            <div className="flex-1 flex flex-col">
+              <div className="bg-yellow-50 p-3 text-center text-xs font-bold text-yellow-700 border-b border-yellow-200 flex flex-col md:flex-row justify-center items-center gap-2">
+                <span className="text-xl">⚠️</span> 
+                <span><strong>Erro de Acesso?</strong> Vá no seu Looker Studio em: <strong>Arquivo &gt; Incorporar Relatório</strong> e marque a caixa <strong>Ativar Incorporação</strong>.</span>
+              </div>
+              <iframe src={getEmbedUrl(config.lookerStudioUrl)} frameBorder="0" style={{ border: 0 }} allowFullScreen className="w-full h-full flex-1 min-h-[700px]"></iframe>
+            </div>
           ) : (
             <div className="flex flex-col items-center justify-center h-full flex-1 p-12 text-center opacity-60">
               <BarChart3 size={64} className="mb-4" />
@@ -863,6 +885,17 @@ function SettingsView({ config, setConfig, users, setUsers, showToast }) {
     }
   };
 
+  // Componente Reutilizável para Input de Códigos HEX Livres
+  const HexInput = ({ label, value, onChange }) => (
+    <div>
+      <label className="text-[10px] font-bold opacity-60 uppercase tracking-wider block mb-1">{label}</label>
+      <div className="flex items-center gap-2 bg-gray-50 p-1.5 rounded-xl border border-gray-200">
+        <input value={value} onChange={e => onChange(e.target.value)} className="w-full bg-transparent outline-none font-mono text-sm uppercase text-gray-700 px-2" placeholder="#000000" maxLength={7} />
+        <div className="w-8 h-8 rounded-lg shadow-sm border border-gray-200 flex-shrink-0" style={{ backgroundColor: value }}></div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="max-w-4xl mx-auto space-y-8 pb-10">
       <div>
@@ -886,23 +919,11 @@ function SettingsView({ config, setConfig, users, setUsers, showToast }) {
             </div>
           </div>
           
-          <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100 grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs font-bold opacity-60 uppercase tracking-wider block mb-1 text-center">Cor Primária</label>
-              <input type="color" value={config.color} onChange={e => setConfig({...config, color: e.target.value})} className="w-full h-12 rounded-xl cursor-pointer border-0 bg-transparent" />
-            </div>
-            <div>
-              <label className="text-xs font-bold opacity-60 uppercase tracking-wider block mb-1 text-center">Cor Secundária</label>
-              <input type="color" value={config.secondaryColor} onChange={e => setConfig({...config, secondaryColor: e.target.value})} className="w-full h-12 rounded-xl cursor-pointer border-0 bg-transparent" />
-            </div>
-            <div>
-              <label className="text-xs font-bold opacity-60 uppercase tracking-wider block mb-1 text-center">Fundo Global</label>
-              <input type="color" value={config.bgColor} onChange={e => setConfig({...config, bgColor: e.target.value})} className="w-full h-12 rounded-xl cursor-pointer border-0 bg-transparent" />
-            </div>
-            <div>
-              <label className="text-xs font-bold opacity-60 uppercase tracking-wider block mb-1 text-center">Texto / Contraste</label>
-              <input type="color" value={config.textColor} onChange={e => setConfig({...config, textColor: e.target.value})} className="w-full h-12 rounded-xl cursor-pointer border-0 bg-transparent" />
-            </div>
+          <div className="bg-white p-5 rounded-3xl border border-gray-100 shadow-sm grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <HexInput label="Cor Primária" value={config.color} onChange={v => setConfig({...config, color: v})} />
+            <HexInput label="Cor Secundária" value={config.secondaryColor} onChange={v => setConfig({...config, secondaryColor: v})} />
+            <HexInput label="Fundo Global" value={config.bgColor} onChange={v => setConfig({...config, bgColor: v})} />
+            <HexInput label="Texto / Contraste" value={config.textColor} onChange={v => setConfig({...config, textColor: v})} />
           </div>
         </div>
       </div>
