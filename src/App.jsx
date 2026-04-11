@@ -23,7 +23,7 @@ const defaultFinances = [
   { id: 1, desc: 'Fatura Abril', due: '2026-04-20', pix: '000.000.000-00', boleto: '', nf: '', status: 'Pendente' }
 ];
 
-const defaultReports = [{ id: 1, date: new Date().toISOString().split('T')[0], leads: 150, cost: '5.50', contracts: 10, attachment: '', custom: [{ label: 'Alcance Total', value: '45.000' }, { label: 'CTR Médio', value: '2.5%' }] }];
+const defaultReports = [{ id: 1, date: new Date().toISOString().split('T')[0], leads: 150, cost: '5.50', contracts: 10, attachment: '', aiAnalysis: '', custom: [{ label: 'Alcance Total', value: '45.000' }, { label: 'CTR Médio', value: '2.5%' }] }];
 const defaultDocs = [{ id: 1, title: 'Contrato Social', date: '2025-01-10', link: '' }];
 
 // Novas configurações de personalização
@@ -520,14 +520,11 @@ function CalendarView({ data, config, onOpenCard }) {
 }
 
 function TrafficView({ data, setData, user, config, showToast }) {
-  const [activeTab, setActiveTab] = useState('looker'); // 'manual', 'looker', 'ai'
+  const isClient = user.role === 'empresa';
+  const [activeTab, setActiveTab] = useState('looker'); // 'looker', 'reports'
   const [expandedId, setExpandedId] = useState(null);
-  
-  // IA Report State
-  const [aiReport, setAiReport] = useState('');
-  const [aiLoading, setAiLoading] = useState(false);
+  const [aiLoadingId, setAiLoadingId] = useState(null);
 
-  // Formata a URL do Looker Studio para Embed automaticamente
   const getEmbedUrl = (url) => {
     if(!url) return '';
     if(url.includes('/embed/')) return url;
@@ -535,28 +532,28 @@ function TrafficView({ data, setData, user, config, showToast }) {
   };
 
   const addReport = () => {
-    const newRep = { id: Date.now(), date: new Date().toISOString().split('T')[0], leads: 0, cost: '0', contracts: 0, attachment: '', custom: [] };
+    const newRep = { id: Date.now(), date: new Date().toISOString().split('T')[0], leads: 0, cost: '0', contracts: 0, attachment: '', aiAnalysis: '', custom: [] };
     setData([newRep, ...data]);
     setExpandedId(newRep.id);
   };
 
-  const generateAIReport = async () => {
-    setAiLoading(true);
+  const generateAIForReport = async (reportId) => {
+    setAiLoadingId(reportId);
     try {
-      // Pega o relatório mais recente salvo nas métricas manuais
-      const lastRep = data[0]; 
-      const metricsText = lastRep ? `Leads: ${lastRep.leads}, Custo por Lead: R$ ${lastRep.cost}, Contratos: ${lastRep.contracts}. ` + lastRep.custom.map(c => `${c.label}: ${c.value}`).join(', ') : "Sem dados cadastrados ainda.";
+      const rep = data.find(r => r.id === reportId);
+      const metricsText = `Leads: ${rep.leads}, Custo por Lead: R$ ${rep.cost}, Contratos Fechados: ${rep.contracts}. ` + rep.custom.map(c => `${c.label}: ${c.value}`).join(', ');
       
-      const prompt = `Gere um Relatório de Performance Executivo com base nos seguintes dados recentes: ${metricsText}. Divida o relatório em: "Resumo Executivo", "Análise de Plataformas (Google Ads x Meta Ads)", "Eficiência e Custo", e "Recomendações Práticas". Faça com uma linguagem profissional de agência de marketing para o cliente.`;
-      const sysInst = "Você é um Analista Senior de Performance de Marketing. Produza um relatório claro, direto e focado em resultados, destacando a eficiência e recomendando próximos passos de investimento.";
+      const prompt = `Atuando de forma extremamente profissional como a agência ${config.companyName}, redija uma análise de performance executiva para nosso cliente referente ao período atual. Use os seguintes dados extraídos do dashboard do Google/Meta Ads: ${metricsText}. \nDivida o texto usando headers markdown (##) nestas seções: "Resumo Executivo do Período", "Análise de Plataformas e Eficiência", e "Próximos Passos e Recomendações". Não mencione que você é uma IA, aja 100% como um analista humano sênior enviando um relatório direto ao cliente.`;
+      const sysInst = "Você é um Analista Senior de Performance. Produza um relatório claro, profissional e focado em resultados reais.";
 
       const { text, model } = await callGeminiAPI(prompt, sysInst, config, showToast);
-      setAiReport(text);
-      showToast(`Relatório IA gerado com sucesso (${model})!`);
+      
+      setData(data.map(d => d.id === reportId ? { ...d, aiAnalysis: text } : d));
+      showToast(`Análise gerada e incorporada com sucesso (${model})!`);
     } catch (e) {
       showToast(e.message);
     } finally {
-      setAiLoading(false);
+      setAiLoadingId(null);
     }
   };
 
@@ -565,19 +562,16 @@ function TrafficView({ data, setData, user, config, showToast }) {
       <div className="flex flex-col md:flex-row md:justify-between md:items-end mb-8 gap-4">
         <div>
           <h1 className="text-3xl font-black">Performance & Business Intelligence</h1>
-          <p className="text-sm font-medium opacity-70 mt-1">Acompanhe métricas, veja dashboards em tempo real e relatórios de IA.</p>
+          <p className="text-sm font-medium opacity-70 mt-1">Acompanhe as métricas e relatórios das suas campanhas de tráfego.</p>
         </div>
         
-        {/* Navegação de Abas */}
+        {/* Navegação de Abas - Unificada e Adaptada por Perfil */}
         <div className="flex bg-gray-200/50 p-1 rounded-xl w-fit">
           <button onClick={() => setActiveTab('looker')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'looker' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}>
-            <BarChart3 size={16}/> Dashboard Google
+            <BarChart3 size={16}/> Dashboard Integrado
           </button>
-          <button onClick={() => setActiveTab('manual')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'manual' ? 'bg-white shadow-sm text-green-600' : 'text-gray-500 hover:text-gray-800'}`}>
-            <TrendingUp size={16}/> Inserção Manual
-          </button>
-          <button onClick={() => setActiveTab('ai')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'ai' ? 'bg-white shadow-sm text-purple-600' : 'text-gray-500 hover:text-gray-800'}`}>
-            <BrainCircuit size={16}/> Relatório IA
+          <button onClick={() => setActiveTab('reports')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'reports' ? 'bg-white shadow-sm text-green-600' : 'text-gray-500 hover:text-gray-800'}`}>
+            <FileSearch size={16}/> {isClient ? 'Relatórios Azione' : 'Gerenciar Relatórios'}
           </button>
         </div>
       </div>
@@ -589,97 +583,119 @@ function TrafficView({ data, setData, user, config, showToast }) {
             <div className="flex-1 flex flex-col">
               <div className="bg-yellow-50 p-3 text-center text-xs font-bold text-yellow-700 border-b border-yellow-200 flex flex-col md:flex-row justify-center items-center gap-2">
                 <span className="text-xl">⚠️</span> 
-                <span><strong>Erro de Acesso?</strong> Vá no seu Looker Studio em: <strong>Arquivo &gt; Incorporar Relatório</strong> e marque a caixa <strong>Ativar Incorporação</strong>.</span>
+                <span><strong>Aviso de Segurança Google:</strong> Se o painel não carregar, acesse seu Looker Studio, vá em <strong>Arquivo &gt; Incorporar Relatório</strong> e marque a caixa <strong>Ativar Incorporação</strong>.</span>
               </div>
               <iframe src={getEmbedUrl(config.lookerStudioUrl)} frameBorder="0" style={{ border: 0 }} allowFullScreen className="w-full h-full flex-1 min-h-[700px]"></iframe>
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center h-full flex-1 p-12 text-center opacity-60">
               <BarChart3 size={64} className="mb-4" />
-              <h3 className="text-xl font-bold">Looker Studio não configurado</h3>
+              <h3 className="text-xl font-bold">Dashboard não configurado</h3>
               <p className="text-sm mt-2">O Gestor precisa inserir a URL do Looker Studio na aba de Configurações.</p>
             </div>
           )}
         </div>
       )}
 
-      {/* ABA 2: RELATÓRIO IA (Gemini) */}
-      {activeTab === 'ai' && (
-        <div className="flex-1 max-w-4xl w-full mx-auto bg-white rounded-3xl shadow-sm border border-gray-200/50 p-8">
-          <div className="flex items-center justify-between mb-6 pb-6 border-b border-gray-100">
-            <div>
-              <h2 className="text-2xl font-black text-gray-800 flex items-center gap-2"><BrainCircuit className="text-purple-600"/> Analista Virtual Azione</h2>
-              <p className="text-sm text-gray-500 mt-1 font-medium">Gera análises executivas profundas baseadas nas suas últimas métricas cadastradas.</p>
-            </div>
-            <button onClick={generateAIReport} disabled={aiLoading} className="bg-purple-600 hover:bg-purple-700 text-white font-bold px-6 py-3 rounded-xl shadow-lg transition-transform hover:scale-105 disabled:opacity-50 flex items-center gap-2">
-              {aiLoading ? <span className="animate-pulse">Analisando Dados...</span> : <><FileSearch size={18}/> Gerar Novo Relatório</>}
-            </button>
-          </div>
-          
-          <div className="bg-gray-50 rounded-2xl p-6 min-h-[400px] border border-gray-100">
-            {!aiReport && !aiLoading && <div className="text-center py-20 opacity-40 font-bold">Clique no botão acima para gerar um relatório inteligente de performance.</div>}
-            {aiLoading && <div className="text-center py-20 font-bold text-purple-600 animate-pulse">Consultando a IA do Google... aguarde.</div>}
-            {aiReport && !aiLoading && (
-              <div className="prose prose-purple max-w-none">
-                {/* Processamento super simples de Markdown para bold e quebras de linha */}
-                {aiReport.split('\n').map((line, i) => {
-                  if(line.startsWith('##')) return <h3 key={i} className="text-xl font-black mt-6 mb-3 text-gray-800 border-b pb-2">{line.replace(/#/g, '')}</h3>;
-                  if(line.startsWith('#')) return <h2 key={i} className="text-2xl font-black mt-8 mb-4 text-purple-900">{line.replace(/#/g, '')}</h2>;
-                  if(line.startsWith('* ') || line.startsWith('- ')) return <li key={i} className="ml-4 mb-1 text-gray-700">{line.substring(2)}</li>;
-                  return <p key={i} className="mb-3 text-gray-700 leading-relaxed" dangerouslySetInnerHTML={{__html: line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}}></p>;
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ABA 3: INSERÇÃO MANUAL DE DADOS */}
-      {activeTab === 'manual' && (
-        <div className="max-w-4xl w-full mx-auto space-y-4">
-          {user.role === 'gestor' && (
-            <div className="flex justify-end mb-4">
+      {/* ABA 2: RELATÓRIOS (Visão Unificada: IA + PDF) */}
+      {activeTab === 'reports' && (
+        <div className="max-w-5xl w-full mx-auto space-y-5">
+          {!isClient && (
+            <div className="flex justify-between items-center bg-blue-50 border border-blue-100 p-4 rounded-2xl mb-2">
+              <p className="text-sm font-semibold text-blue-800">Extraia o PDF do Looker Studio, insira os dados cruciais abaixo e gere uma análise para o cliente com IA.</p>
               <button onClick={addReport} className="flex items-center gap-2 text-white px-5 py-2.5 rounded-xl shadow-lg font-bold transition-transform hover:scale-105" style={{ backgroundColor: config.color }}>
-                <Plus size={18} /> Nova Análise Manual
+                <Plus size={18} /> Novo Relatório
               </button>
             </div>
           )}
+          
           {data.map((rep, idx) => (
-            <div key={rep.id} className="bg-white rounded-2xl shadow-sm border border-gray-200/50 overflow-hidden">
-              <div onClick={() => setExpandedId(expandedId === rep.id ? null : rep.id)} className="p-5 flex justify-between items-center cursor-pointer hover:bg-gray-50 transition-colors">
-                <div className="flex items-center gap-4">
-                  <div className="w-12 h-12 rounded-xl flex items-center justify-center shadow-inner" style={{ backgroundColor: `${config.secondaryColor}20`, color: config.secondaryColor }}><TrendingUp size={24}/></div>
+            <div key={rep.id} className="bg-white rounded-3xl shadow-sm border border-gray-200/50 overflow-hidden hover:shadow-md transition-shadow">
+              <div onClick={() => setExpandedId(expandedId === rep.id ? null : rep.id)} className="p-6 flex justify-between items-center cursor-pointer hover:bg-gray-50 transition-colors">
+                <div className="flex items-center gap-5">
+                  <div className="w-14 h-14 rounded-2xl flex items-center justify-center shadow-inner" style={{ backgroundColor: `${config.secondaryColor}20`, color: config.secondaryColor }}><TrendingUp size={26}/></div>
                   <div>
-                    <h3 className="font-bold text-lg text-gray-800">Fechamento de Performance</h3>
-                    <p className="text-sm font-semibold opacity-60">Referência: {new Date(rep.date).toLocaleDateString('pt-BR')} (Clique para expandir)</p>
+                    <h3 className="font-black text-xl text-gray-800">Relatório de Performance</h3>
+                    <p className="text-sm font-bold opacity-60 mt-0.5">Mês de Referência: {new Date(rep.date).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }).toUpperCase()}</p>
                   </div>
                 </div>
-                <div className="bg-gray-100 p-2 rounded-full text-gray-500">
+                <div className="bg-gray-100 p-3 rounded-xl text-gray-500 shadow-sm border border-gray-200">
                   {expandedId === rep.id ? <ChevronUp size={20}/> : <ChevronDown size={20}/>}
                 </div>
               </div>
 
               {expandedId === rep.id && (
-                <div className="p-6 border-t border-gray-100 bg-gray-50/50 grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <MetricBox label="Leads Totais" val={rep.leads} onChange={v => { const n = [...data]; n[idx].leads = v; setData(n); }} edit={user.role === 'gestor'} color={config.color} />
-                  <MetricBox label="Custo / Lead" val={`R$ ${rep.cost}`} onChange={v => { const n = [...data]; n[idx].cost = v.replace('R$ ', ''); setData(n); }} edit={user.role === 'gestor'} color={config.color} />
-                  <MetricBox label="Contratos" val={rep.contracts} onChange={v => { const n = [...data]; n[idx].contracts = v; setData(n); }} edit={user.role === 'gestor'} color={config.color} />
+                <div className="border-t border-gray-100">
                   
-                  {rep.custom.map((c, cidx) => (
-                    <MetricBox key={cidx} label={c.label} val={c.value} onChange={v => { const n = [...data]; n[idx].custom[cidx].value = v; setData(n); }} edit={user.role === 'gestor'} color={config.color} />
-                  ))}
+                  {/* VISÃO DO GESTOR: Inserção de Dados e Geração */}
+                  {!isClient && (
+                    <div className="p-6 bg-gray-50/80 border-b border-gray-200/50">
+                      <h4 className="text-xs font-black text-gray-400 uppercase tracking-wider mb-4">1. Inserção de Métricas do Dashboard</h4>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+                        <MetricBox label="Leads Totais" val={rep.leads} onChange={v => { const n = [...data]; n[idx].leads = v; setData(n); }} edit={true} color={config.color} />
+                        <MetricBox label="Custo / Lead" val={`R$ ${rep.cost}`} onChange={v => { const n = [...data]; n[idx].cost = v.replace('R$ ', ''); setData(n); }} edit={true} color={config.color} />
+                        <MetricBox label="Contratos" val={rep.contracts} onChange={v => { const n = [...data]; n[idx].contracts = v; setData(n); }} edit={true} color={config.color} />
+                        {rep.custom.map((c, cidx) => (
+                          <MetricBox key={cidx} label={c.label} val={c.value} onChange={v => { const n = [...data]; n[idx].custom[cidx].value = v; setData(n); }} edit={true} color={config.color} />
+                        ))}
+                        <div className="border-2 border-dashed border-gray-300 p-2 rounded-2xl flex flex-col items-center justify-center bg-white hover:bg-gray-50 transition-colors">
+                           <button onClick={() => { const label = prompt("Nome da nova métrica (Ex: ROAS):"); if(label) { const n = [...data]; n[idx].custom.push({ label, value: '0' }); setData(n); } }} className="text-xs font-bold text-gray-500 hover:text-blue-600 w-full">+ Adicionar</button>
+                        </div>
+                      </div>
 
-                  {user.role === 'gestor' && (
-                    <div className="col-span-full border-2 border-dashed border-gray-300 p-4 rounded-2xl flex flex-col items-center justify-center bg-white hover:bg-gray-50 transition-colors">
-                       <button onClick={() => { const label = prompt("Nome da nova métrica:"); if(label) { const n = [...data]; n[idx].custom.push({ label, value: '0' }); setData(n); } }} className="text-sm font-bold text-gray-500 hover:text-blue-600 w-full p-2">+ Adicionar Métrica Personalizada (Ex: Alcance)</button>
+                      <h4 className="text-xs font-black text-gray-400 uppercase tracking-wider mb-4">2. Análise do Período</h4>
+                      <div className="flex flex-col gap-3">
+                        <textarea 
+                          value={rep.aiAnalysis} 
+                          onChange={e => { const n = [...data]; n[idx].aiAnalysis = e.target.value; setData(n); }} 
+                          className="w-full p-5 border border-gray-200 rounded-2xl outline-none focus:border-blue-400 min-h-[200px] text-gray-700 bg-white leading-relaxed shadow-inner resize-none"
+                          placeholder="Você pode escrever a análise manualmente aqui ou usar a Inteligência Artificial clicando no botão abaixo..."
+                        />
+                        <button 
+                          onClick={() => generateAIForReport(rep.id)} 
+                          disabled={aiLoadingId === rep.id} 
+                          className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-bold px-6 py-3.5 rounded-xl shadow-md transition-transform hover:scale-[1.01] flex items-center justify-center gap-2 disabled:opacity-70"
+                        >
+                          {aiLoadingId === rep.id ? <span className="animate-pulse">Analisando métricas e elaborando relatório...</span> : <><BrainCircuit size={18}/> Redigir Análise com IA (Baseado nas Métricas)</>}
+                        </button>
+                      </div>
+
+                      <h4 className="text-xs font-black text-gray-400 uppercase tracking-wider mt-8 mb-4">3. Anexar PDF do Looker Studio</h4>
+                      <div className="flex gap-2">
+                        <input value={rep.attachment} onChange={e => { const n = [...data]; n[idx].attachment = e.target.value; setData(n); }} className="flex-1 p-3 border border-gray-200 rounded-xl outline-none text-sm bg-white" placeholder="Link do Google Drive contendo o PDF do relatório..." />
+                      </div>
                     </div>
                   )}
-                  <div className="col-span-full mt-2 flex flex-col gap-2">
-                    <div className="flex items-center gap-2">
-                      <a href={rep.attachment || '#'} target="_blank" rel="noreferrer" onClick={e => !rep.attachment && e.preventDefault()} className={`px-5 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 shadow-sm ${rep.attachment ? 'text-white hover:opacity-90' : 'text-gray-400 bg-gray-200 cursor-not-allowed'}`} style={rep.attachment ? {backgroundColor: config.secondaryColor} : {}}><LinkIcon size={16}/> Ver PDF Completo Anexado</a>
-                      {user.role === 'gestor' && <button onClick={() => { const url = prompt("Link do PDF/Drive:"); if(url!==null) { const n = [...data]; n[idx].attachment = url; setData(n); } }} className="text-gray-500 hover:text-gray-800 text-sm font-bold px-3 py-2 bg-gray-200 rounded-xl">Editar Link</button>}
+
+                  {/* VISÃO DO CLIENTE: O Relatório Pronto, Bonito e Profissional */}
+                  <div className="p-8 bg-white">
+                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4 border-b border-gray-100 pb-6">
+                      <div>
+                        <h2 className="text-2xl font-black" style={{ color: config.color }}>Análise Executiva</h2>
+                        <p className="text-sm text-gray-500 font-semibold mt-1">Visão estratégica da equipe {config.companyName}</p>
+                      </div>
+                      {rep.attachment && (
+                        <a href={rep.attachment} target="_blank" rel="noreferrer" className="flex items-center gap-2 px-6 py-3 rounded-xl font-bold text-white shadow-lg transition-transform hover:scale-105 w-full md:w-auto justify-center" style={{ backgroundColor: config.secondaryColor }}>
+                          <Download size={18}/> Baixar Relatório em PDF
+                        </a>
+                      )}
                     </div>
+
+                    {!rep.aiAnalysis ? (
+                      <div className="text-center py-10 opacity-40 font-bold text-gray-500">A análise estratégica deste período está sendo elaborada pela equipe.</div>
+                    ) : (
+                      <div className="prose prose-lg max-w-none text-gray-700">
+                        {rep.aiAnalysis.split('\n').map((line, i) => {
+                          if(line.startsWith('##')) return <h3 key={i} className="text-xl font-black mt-8 mb-4 text-gray-800 border-l-4 pl-3" style={{ borderLeftColor: config.color }}>{line.replace(/#/g, '')}</h3>;
+                          if(line.startsWith('#')) return <h2 key={i} className="text-2xl font-black mt-8 mb-4 text-gray-900">{line.replace(/#/g, '')}</h2>;
+                          if(line.startsWith('* ') || line.startsWith('- ')) return <li key={i} className="ml-4 mb-2">{line.substring(2).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</li>;
+                          if(!line.trim()) return <br key={i}/>;
+                          return <p key={i} className="mb-4 leading-relaxed" dangerouslySetInnerHTML={{__html: line.replace(/\*\*(.*?)\*\*/g, '<strong class="text-gray-900">$1</strong>')}}></p>;
+                        })}
+                      </div>
+                    )}
                   </div>
+
                 </div>
               )}
             </div>
