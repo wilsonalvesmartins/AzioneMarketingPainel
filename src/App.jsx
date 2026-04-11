@@ -3,7 +3,8 @@ import {
   LayoutDashboard, KanbanSquare, CalendarDays, TrendingUp, 
   DollarSign, FileText, Settings, LogOut, Plus, X, 
   MessageSquare, Calendar, Link as LinkIcon, Image, 
-  Bot, Save, Edit3, Trash2, ChevronDown, ChevronUp, Copy, Download
+  Bot, Save, Edit3, Trash2, ChevronDown, ChevronUp, Copy, Download,
+  BarChart3, BrainCircuit, FileSearch
 } from 'lucide-react';
 
 // --- DADOS PADRÃO (Usados apenas se o banco da VPS estiver vazio) ---
@@ -22,9 +23,20 @@ const defaultFinances = [
   { id: 1, desc: 'Fatura Abril', due: '2026-04-20', pix: '000.000.000-00', boleto: '', nf: '', status: 'Pendente' }
 ];
 
-const defaultReports = [{ id: 1, date: '2026-04-01', leads: 150, cost: '5.50', contracts: 10, attachment: '', custom: [{ label: 'Alcance Total', value: '45.000' }] }];
+const defaultReports = [{ id: 1, date: new Date().toISOString().split('T')[0], leads: 150, cost: '5.50', contracts: 10, attachment: '', custom: [{ label: 'Alcance Total', value: '45.000' }, { label: 'CTR Médio', value: '2.5%' }] }];
 const defaultDocs = [{ id: 1, title: 'Contrato Social', date: '2025-01-10', link: '' }];
-const defaultConfig = { companyName: 'Azione Marketing', logo: '', color: '#3B82F6', geminiKey: '' };
+
+// Novas configurações de personalização
+const defaultConfig = { 
+  companyName: 'Azione Marketing', 
+  logo: '', 
+  color: '#EF4444', // Vermelho do PDF
+  secondaryColor: '#991B1B', 
+  bgColor: '#F3F4F6', 
+  textColor: '#1F2937',
+  geminiKey: '',
+  lookerStudioUrl: 'https://lookerstudio.google.com/reporting/10b2cbf5-4b1f-4f87-a96a-855d8067c523/page/4E6KF'
+};
 
 // --- HOOK DE PERSISTÊNCIA (Grava na VPS ou LocalStorage) ---
 function usePersistentState(key, initialValue) {
@@ -32,22 +44,15 @@ function usePersistentState(key, initialValue) {
   const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
-    // 1. Tenta buscar os dados do Banco da VPS
     fetch(`/api/data/${key}`)
-      .then(res => {
-        if (!res.ok) throw new Error('API da VPS inacessível');
-        return res.json();
-      })
+      .then(res => { if (!res.ok) throw new Error(); return res.json(); })
       .then(data => {
-        if (data && data.data) setState(data.data);
+        if (data && data.data) setState({ ...initialValue, ...data.data }); // Merge config antiga com a nova
         setIsLoaded(true);
       })
       .catch(err => {
-        // 2. Se a VPS não responder (ex: Preview Canvas), busca do cache local
         const local = localStorage.getItem(`azione_${key}`);
-        if (local) {
-          try { setState(JSON.parse(local)); } catch(e){}
-        }
+        if (local) { try { setState({ ...initialValue, ...JSON.parse(local) }); } catch(e){} }
         setIsLoaded(true);
       });
   }, [key]);
@@ -55,14 +60,9 @@ function usePersistentState(key, initialValue) {
   const setPersistentState = (newValue) => {
     const valueToStore = typeof newValue === 'function' ? newValue(state) : newValue;
     setState(valueToStore);
-    
-    // 1. Tenta Salvar no Banco da VPS
     fetch(`/api/data/${key}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ data: valueToStore })
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: valueToStore })
     }).catch(() => {
-      // 2. Se falhar (Preview), salva no cache local para não perder
       localStorage.setItem(`azione_${key}`, JSON.stringify(valueToStore));
     });
   };
@@ -70,11 +70,42 @@ function usePersistentState(key, initialValue) {
   return [state, setPersistentState, isLoaded];
 }
 
+// --- FUNÇÃO GLOBAL DE CHAMADA DO GEMINI ---
+const callGeminiAPI = async (prompt, systemInstruction, config, showToast) => {
+  if (!config.geminiKey) throw new Error("Chave API do Gemini não configurada.");
+  
+  const modelsToTry = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro'];
+  let lastError = '';
+
+  for (const model of modelsToTry) {
+    try {
+      const payload = {
+        contents: [{ parts: [{ text: prompt }] }],
+        systemInstruction: { parts: [{ text: systemInstruction }] }
+      };
+      
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${config.geminiKey}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+      });
+      
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error?.message || `Erro HTTP ${res.status}`);
+      
+      const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (text) return { text, model };
+      throw new Error("Resposta vazia da IA.");
+    } catch (e) {
+      lastError = e.message;
+    }
+  }
+  throw new Error(`Falha após tentar todos os modelos. Último erro: ${lastError}`);
+};
+
 // --- COMPONENTES DE UI ---
 const Toast = ({ msg, onClose }) => {
   useEffect(() => { const timer = setTimeout(onClose, 5000); return () => clearTimeout(timer); }, [onClose]);
   return (
-    <div className="fixed bottom-4 right-4 bg-gray-800 text-white px-6 py-3 rounded-xl shadow-2xl flex items-center gap-3 z-50 animate-bounce max-w-md">
+    <div className="fixed bottom-4 right-4 bg-gray-900 text-white px-6 py-3 rounded-xl shadow-2xl flex items-center gap-3 z-50 animate-bounce max-w-md border border-gray-700">
       <span className="text-sm font-medium">{msg}</span>
       <button onClick={onClose} className="hover:text-gray-300 flex-shrink-0"><X size={16} /></button>
     </div>
@@ -95,17 +126,20 @@ export default function App() {
   const [docs, setDocs, dLoad] = usePersistentState('docs', defaultDocs);
   const [config, setConfig, cLoad] = usePersistentState('config', defaultConfig);
 
-  // Estado para gerenciar qual card abrir ao vir do Cronograma
   const [openCardId, setOpenCardId] = useState(null);
 
   const showToast = (msg) => setToast(msg);
 
-  // Tela de Loading enquanto busca dados da VPS
   if (!uLoad || !kLoad || !rLoad || !fLoad || !dLoad || !cLoad) {
     return <div className="min-h-screen flex items-center justify-center bg-gray-50"><div className="animate-pulse text-xl font-bold text-gray-500">Conectando ao banco de dados...</div></div>;
   }
 
-  // Login Handler
+  // Estilos Dinâmicos Globais Baseados nas Configurações
+  const appStyles = {
+    backgroundColor: config.bgColor || '#F3F4F6',
+    color: config.textColor || '#1F2937'
+  };
+
   const handleLogin = (e) => {
     e.preventDefault();
     const login = e.target.login.value;
@@ -121,19 +155,16 @@ export default function App() {
 
   if (!user) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 p-4">
-        <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md text-center">
-          {config.logo ? <img src={config.logo} alt="Logo" className="h-16 mx-auto mb-6 object-contain" /> : <h1 className="text-3xl font-bold text-gray-800 mb-6" style={{ color: config.color }}>{config.companyName}</h1>}
+      <div className="min-h-screen flex items-center justify-center p-4 transition-colors duration-500" style={{ backgroundColor: config.bgColor }}>
+        <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md text-center border border-gray-100">
+          {config.logo ? <img src={config.logo} alt="Logo" className="h-20 mx-auto mb-6 object-contain" /> : <h1 className="text-3xl font-black mb-6" style={{ color: config.color }}>{config.companyName}</h1>}
           <form onSubmit={handleLogin} className="space-y-4">
-            <input name="login" type="text" placeholder="Usuário" required className="w-full p-3 border rounded-xl outline-none focus:ring-2" style={{ focusRing: config.color }} />
-            <input name="pass" type="password" placeholder="Senha" required className="w-full p-3 border rounded-xl outline-none focus:ring-2" />
-            <button type="submit" className="w-full text-white p-3 rounded-xl font-semibold transition-opacity hover:opacity-90" style={{ backgroundColor: config.color }}>Entrar no Painel</button>
+            <input name="login" type="text" placeholder="Usuário" required className="w-full p-4 border border-gray-200 rounded-xl outline-none focus:ring-2 bg-gray-50 text-gray-800" style={{ focusRing: config.color }} />
+            <input name="pass" type="password" placeholder="Senha" required className="w-full p-4 border border-gray-200 rounded-xl outline-none focus:ring-2 bg-gray-50 text-gray-800" />
+            <button type="submit" className="w-full text-white p-4 rounded-xl font-bold text-lg transition-transform hover:scale-[1.02] shadow-lg" style={{ backgroundColor: config.color }}>Acessar Painel</button>
           </form>
-          <div className="mt-6 text-sm text-gray-500 flex flex-col gap-1">
-            <p>Dicas de acesso:</p>
-            <p>empresa / empresa123</p>
-            <p>gestor / gestor123</p>
-            <p>midias / midias123</p>
+          <div className="mt-8 text-xs font-medium text-gray-400">
+            Azione Marketing e Propaganda © 2026
           </div>
         </div>
         {toast && <Toast msg={toast} onClose={() => setToast('')} />}
@@ -141,57 +172,55 @@ export default function App() {
     );
   }
 
-  // Permissões Menu
   const menuItems = [
     { id: 'kanban', label: 'Esteira', icon: <KanbanSquare size={20} />, roles: ['empresa', 'gestor', 'midias'] },
     { id: 'calendar', label: 'Cronograma', icon: <CalendarDays size={20} />, roles: ['empresa', 'gestor', 'midias'] },
-    { id: 'traffic', label: 'Tráfego', icon: <TrendingUp size={20} />, roles: ['empresa', 'gestor'] },
+    { id: 'traffic', label: 'Tráfego & BI', icon: <TrendingUp size={20} />, roles: ['empresa', 'gestor'] },
     { id: 'finance', label: 'Financeiro', icon: <DollarSign size={20} />, roles: ['empresa', 'gestor'] },
     { id: 'docs', label: 'Documentos', icon: <FileText size={20} />, roles: ['empresa', 'gestor'] },
     { id: 'settings', label: 'Configurações', icon: <Settings size={20} />, roles: ['gestor'] },
   ].filter(item => item.roles.includes(user.role));
 
   return (
-    <div className="min-h-screen bg-gray-100 flex flex-col md:flex-row">
-      {/* Sidebar Desktop / Topbar Mobile */}
-      <aside className="bg-white border-r border-gray-200 md:w-64 flex-shrink-0 flex flex-col justify-between" style={{ borderTop: `4px solid ${config.color}` }}>
-        <div className="p-4 md:p-6">
+    <div className="min-h-screen flex flex-col md:flex-row transition-colors duration-500 font-sans" style={appStyles}>
+      {/* Sidebar */}
+      <aside className="bg-white border-r border-gray-200 md:w-64 flex-shrink-0 flex flex-col justify-between shadow-sm z-10" style={{ borderTop: `5px solid ${config.color}` }}>
+        <div className="p-5 md:p-6">
           <div className="flex items-center gap-3 mb-8 overflow-hidden">
-            {config.logo ? <img src={config.logo} alt="Logo" className="h-10 flex-shrink-0 object-contain" /> : <div className="w-10 h-10 rounded-lg flex-shrink-0 flex items-center justify-center text-white font-bold" style={{ backgroundColor: config.color }}>AZ</div>}
+            {config.logo ? <img src={config.logo} alt="Logo" className="h-10 flex-shrink-0 object-contain" /> : <div className="w-10 h-10 rounded-xl flex-shrink-0 flex items-center justify-center text-white font-black text-xl shadow-md" style={{ backgroundColor: config.color }}>AZ</div>}
             <div className="hidden md:block truncate">
-              <h2 className="font-bold text-gray-800 leading-tight truncate">{config.companyName}</h2>
-              <p className="text-xs text-gray-500 uppercase">{user.role}</p>
+              <h2 className="font-bold text-gray-800 leading-tight truncate text-lg">{config.companyName}</h2>
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mt-1">{user.role}</p>
             </div>
           </div>
           <nav className="flex md:flex-col gap-2 overflow-x-auto md:overflow-visible pb-2 md:pb-0">
             {menuItems.map(item => (
-              <button key={item.id} onClick={() => setView(item.id)} className={`flex items-center gap-3 p-3 rounded-xl transition-colors whitespace-nowrap ${view === item.id ? 'text-white' : 'text-gray-600 hover:bg-gray-50'}`} style={view === item.id ? { backgroundColor: config.color } : {}}>
-                {item.icon} <span className="font-medium hidden md:block">{item.label}</span>
+              <button key={item.id} onClick={() => setView(item.id)} className={`flex items-center gap-3 p-3 rounded-xl transition-all whitespace-nowrap font-semibold ${view === item.id ? 'text-white shadow-md' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'}`} style={view === item.id ? { backgroundColor: config.color } : {}}>
+                {item.icon} <span className="hidden md:block">{item.label}</span>
               </button>
             ))}
           </nav>
         </div>
-        <div className="p-4 border-t border-gray-100 hidden md:block">
-          <button onClick={() => setUser(null)} className="flex items-center gap-3 text-red-500 hover:bg-red-50 p-3 rounded-xl w-full transition-colors">
-            <LogOut size={20} /> <span className="font-medium">Sair</span>
+        <div className="p-5 border-t border-gray-100 hidden md:block">
+          <button onClick={() => setUser(null)} className="flex items-center justify-center gap-2 text-gray-500 hover:text-red-600 hover:bg-red-50 p-3 rounded-xl w-full transition-colors font-bold">
+            <LogOut size={18} /> Sair do Sistema
           </button>
         </div>
       </aside>
 
       {/* Main Content Area */}
-      <main className="flex-1 p-4 md:p-8 overflow-y-auto w-full max-w-[100vw] flex flex-col">
-        <div className="flex-1">
+      <main className="flex-1 p-4 md:p-8 overflow-y-auto w-full max-w-[100vw] flex flex-col relative" style={{ color: config.textColor }}>
+        <div className="flex-1 max-w-7xl mx-auto w-full">
           {view === 'kanban' && <KanbanView data={kanban} setData={setKanban} user={user} config={config} showToast={showToast} openCardId={openCardId} setOpenCardId={setOpenCardId} />}
           {view === 'calendar' && <CalendarView data={kanban} setData={setKanban} config={config} onOpenCard={(id) => { setView('kanban'); setOpenCardId(id); }} />}
-          {view === 'traffic' && <TrafficView data={reports} setData={setReports} user={user} config={config} />}
+          {view === 'traffic' && <TrafficView data={reports} setData={setReports} user={user} config={config} showToast={showToast} />}
           {view === 'finance' && <FinanceView data={finances} setData={setFinances} user={user} config={config} showToast={showToast} />}
           {view === 'docs' && <DocsView data={docs} setData={setDocs} user={user} config={config} />}
           {view === 'settings' && <SettingsView config={config} setConfig={setConfig} users={users} setUsers={setUsers} showToast={showToast} />}
         </div>
         
-        {/* Rodapé Oficial */}
-        <footer className="mt-8 pt-6 border-t border-gray-200 text-center text-xs font-medium text-gray-400">
-          Este é um app oficial Azione Marketing e Propaganda, todos os direitos reservados!
+        <footer className="mt-12 pt-6 border-t border-gray-200/50 text-center text-xs font-semibold" style={{ color: `${config.textColor}80` }}>
+          Este é um app oficial {config.companyName}, todos os direitos reservados!
         </footer>
       </main>
       
@@ -208,7 +237,6 @@ function KanbanView({ data, setData, user, config, showToast, openCardId, setOpe
   const columns = ['Ideias', 'Produção', 'Finalizados', 'Aprovados', 'Rejeitados', 'Programados', 'Postados'];
   const [activeCard, setActiveCard] = useState(null);
 
-  // Efeito para abrir card vindo do cronograma
   useEffect(() => {
     if (openCardId) {
       const cardToOpen = data.find(c => c.id === openCardId);
@@ -232,29 +260,32 @@ function KanbanView({ data, setData, user, config, showToast, openCardId, setOpe
 
   return (
     <div className="h-full flex flex-col">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold text-gray-800">Esteira de Produção</h1>
+      <div className="flex justify-between items-center mb-8">
+        <div>
+          <h1 className="text-3xl font-black">Esteira de Produção</h1>
+          <p className="text-sm font-medium opacity-70 mt-1">Gerencie cards, aprove posts e acompanhe o funil de mídia.</p>
+        </div>
         {['gestor', 'midias'].includes(user.role) && (
-          <button onClick={createCard} className="flex items-center gap-2 text-white px-4 py-2 rounded-xl shadow-md" style={{ backgroundColor: config.color }}>
+          <button onClick={createCard} className="flex items-center gap-2 text-white px-5 py-2.5 rounded-xl shadow-lg hover:opacity-90 font-bold transition-transform hover:scale-105" style={{ backgroundColor: config.color }}>
             <Plus size={18} /> Novo Card
           </button>
         )}
       </div>
 
-      <div className="flex gap-4 overflow-x-auto pb-4 flex-1 items-start">
+      <div className="flex gap-4 overflow-x-auto pb-6 flex-1 items-start snap-x custom-scrollbar">
         {columns.map(col => (
-          <div key={col} className="bg-gray-200/50 min-w-[280px] w-[280px] rounded-2xl p-4 flex flex-col max-h-full" onDragOver={onDragOver} onDrop={(e) => onDrop(e, col)}>
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="font-bold text-gray-700">{col}</h3>
-              <span className="bg-gray-200 text-gray-600 text-xs font-bold px-2 py-1 rounded-full">{data.filter(c => c.col === col).length}</span>
+          <div key={col} className="bg-white/40 backdrop-blur-md border border-gray-200/50 min-w-[300px] w-[300px] rounded-2xl p-4 flex flex-col max-h-[75vh] snap-start shadow-sm" onDragOver={onDragOver} onDrop={(e) => onDrop(e, col)}>
+            <div className="flex justify-between items-center mb-4 pb-2 border-b border-gray-200/50">
+              <h3 className="font-bold text-lg opacity-90">{col}</h3>
+              <span className="text-white text-xs font-bold px-2.5 py-1 rounded-full shadow-sm" style={{ backgroundColor: config.secondaryColor }}>{data.filter(c => c.col === col).length}</span>
             </div>
-            <div className="flex flex-col gap-3 overflow-y-auto">
+            <div className="flex flex-col gap-3 overflow-y-auto pr-1">
               {data.filter(c => c.col === col).map(card => (
-                <div key={card.id} draggable onDragStart={(e) => onDragStart(e, card.id)} onClick={() => setActiveCard(card)} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 cursor-pointer hover:shadow-md transition-shadow">
-                  <h4 className="font-semibold text-gray-800 mb-1">{card.title}</h4>
-                  <div className="flex items-center justify-between text-xs text-gray-400 mt-3">
+                <div key={card.id} draggable onDragStart={(e) => onDragStart(e, card.id)} onClick={() => setActiveCard(card)} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 cursor-pointer hover:shadow-md hover:border-gray-300 transition-all active:scale-95 group">
+                  <h4 className="font-bold text-gray-800 mb-2 group-hover:text-blue-600 transition-colors">{card.title}</h4>
+                  <div className="flex items-center justify-between text-xs font-semibold text-gray-400 mt-3 pt-3 border-t border-gray-50">
                     {card.date ? <span className="flex items-center gap-1"><Calendar size={12}/> {new Date(card.date).toLocaleDateString('pt-BR')}</span> : <span>Sem data</span>}
-                    <span className="flex items-center gap-1"><MessageSquare size={12}/> {card.comments.length}</span>
+                    <span className="flex items-center gap-1 bg-gray-50 px-2 py-1 rounded-md"><MessageSquare size={12}/> {card.comments.length}</span>
                   </div>
                 </div>
               ))}
@@ -287,183 +318,141 @@ function CardModal({ card, user, config, onClose, onSave, showToast }) {
   };
 
   const handleAI = async () => {
-    if (!config.geminiKey) return showToast("Erro: Chave API do Gemini não está configurada nas Configurações.");
     setAiLoading(true);
-    
-    // Fallback Inteligente: Tenta o 2.5 primeiro. Se der falha de demanda (503), pula pro próximo.
-    const modelsToTry = [
-      'gemini-2.5-flash',
-      'gemini-1.5-flash',
-      'gemini-1.5-pro',
-      'gemini-pro'
-    ];
-
-    let success = false;
-    let lastError = '';
-
-    for (const model of modelsToTry) {
-      try {
-        const payload = {
-          contents: [{ parts: [{ text: `Título do Post: ${draft.title}. Detalhes adicionais: ${aiPrompt}` }] }],
-          systemInstruction: { parts: [{ text: `Você atua como especialista em marketing. O usuário pediu para listar os modelos e usar o recomendado. Diga: 'Modelos listados. Utilizando o ${model}.'. Crie uma legenda chamativa com CTA e hashtags.` }] }
-        };
-        
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${config.geminiKey}`, {
-          method: 'POST', 
-          headers: { 'Content-Type': 'application/json' }, 
-          body: JSON.stringify(payload)
-        });
-        
-        const result = await res.json();
-        
-        if (!res.ok) {
-          throw new Error(result.error?.message || `Erro HTTP ${res.status}`);
-        }
-        
-        const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
-        
-        if (text) {
-          setDraft({ ...draft, caption: text });
-          showToast(`Legenda gerada com sucesso (${model})!`);
-          success = true;
-          break; // Sai do loop porque deu certo
-        } else {
-          throw new Error("Resposta vazia da IA.");
-        }
-        
-      } catch (e) {
-        console.warn(`Tentativa com ${model} falhou:`, e.message);
-        lastError = e.message;
-        // O loop continua e tenta o próximo modelo automaticamente
-      }
+    try {
+      const prompt = `Título do Post: ${draft.title}. Descrição: ${draft.desc}. Detalhes extras: ${aiPrompt}`;
+      const systemInstruction = "Você atua como especialista em marketing e copywriter. Crie uma legenda chamativa para redes sociais, focada em conversão, com um bom CTA e hashtags estratégicas.";
+      const { text, model } = await callGeminiAPI(prompt, systemInstruction, config, showToast);
+      
+      setDraft({ ...draft, caption: text });
+      showToast(`Legenda gerada com sucesso (${model})!`);
+    } catch (e) {
+      showToast(e.message);
+    } finally {
+      setAiLoading(false);
+      setAiPrompt('');
     }
-
-    if (!success) {
-      showToast(`Falha após tentar todos os modelos. Último erro: ${lastError}`);
-    }
-    
-    setAiLoading(false);
-    setAiPrompt('');
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-2xl w-full max-w-5xl max-h-[90vh] flex flex-col shadow-2xl">
-        <div className="p-4 border-b flex justify-between items-center">
-          <h2 className="text-xl font-bold">Detalhes do Card</h2>
-          <button onClick={onClose} className="p-2 bg-gray-100 rounded-full hover:bg-gray-200"><X size={20}/></button>
+    <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+      <div className="bg-white text-gray-800 rounded-2xl w-full max-w-5xl max-h-[90vh] flex flex-col shadow-2xl border border-white/20">
+        <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-gray-50 rounded-t-2xl">
+          <h2 className="text-xl font-black">Detalhes do Card</h2>
+          <button onClick={onClose} className="p-2 bg-white rounded-full hover:bg-gray-200 shadow-sm transition-colors text-gray-500"><X size={20}/></button>
         </div>
         
-        <div className="p-6 overflow-y-auto flex-1 grid grid-cols-1 lg:grid-cols-2 gap-8">
-          {/* Coluna Esquerda: Detalhes principais */}
-          <div className="space-y-4">
+        <div className="p-6 overflow-y-auto flex-1 grid grid-cols-1 lg:grid-cols-2 gap-8 bg-white">
+          <div className="space-y-5">
             <div>
-              <label className="text-sm font-semibold text-gray-600 block mb-1">Título</label>
-              <input disabled={!canEditCore} value={draft.title} onChange={e => setDraft({...draft, title: e.target.value})} className="w-full p-2 border rounded-lg outline-none" />
+              <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Título</label>
+              <input disabled={!canEditCore} value={draft.title} onChange={e => setDraft({...draft, title: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:border-blue-500 bg-gray-50/50 font-bold text-lg" />
             </div>
             
             <div className="flex gap-4">
               <div className="flex-1">
-                <label className="text-sm font-semibold text-gray-600 block mb-1">Data Programada</label>
-                <input type="date" value={draft.date} onChange={e => setDraft({...draft, date: e.target.value})} className="w-full p-2 border rounded-lg outline-none" />
+                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Data Programada</label>
+                <input type="date" value={draft.date} onChange={e => setDraft({...draft, date: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:border-blue-500 bg-gray-50/50" />
               </div>
               <div className="flex-1">
-                <label className="text-sm font-semibold text-gray-600 block mb-1">Status (Coluna)</label>
-                <select value={draft.col} onChange={e => setDraft({...draft, col: e.target.value})} className="w-full p-2 border rounded-lg outline-none bg-white">
+                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Status (Coluna)</label>
+                <select value={draft.col} onChange={e => setDraft({...draft, col: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:border-blue-500 bg-white font-semibold">
                   {['Ideias', 'Produção', 'Finalizados', 'Aprovados', 'Rejeitados', 'Programados', 'Postados'].map(c => <option key={c}>{c}</option>)}
                 </select>
               </div>
             </div>
 
             <div>
-              <label className="text-sm font-semibold text-gray-600 block mb-1">Descrição / Roteiro</label>
-              <textarea disabled={!canEditCore} rows={3} value={draft.desc} onChange={e => setDraft({...draft, desc: e.target.value})} className="w-full p-2 border rounded-lg outline-none resize-none" />
+              <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Descrição / Roteiro</label>
+              <textarea disabled={!canEditCore} rows={3} value={draft.desc} onChange={e => setDraft({...draft, desc: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:border-blue-500 bg-gray-50/50 resize-none" placeholder="Detalhes do conteúdo..." />
             </div>
 
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <label className="text-sm font-semibold text-gray-600">Link da Mídia (Drive)</label>
-                <label className="flex items-center gap-2 text-sm">
-                  <input type="checkbox" disabled={!canEditCore} checked={draft.isCarousel} onChange={e => setDraft({...draft, isCarousel: e.target.checked})} />
-                  Carrossel
+            <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
+              <div className="flex items-center justify-between mb-3">
+                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Link da Mídia (Drive)</label>
+                <label className="flex items-center gap-2 text-sm font-semibold text-gray-600 bg-white px-3 py-1 rounded-full shadow-sm border border-gray-200 cursor-pointer">
+                  <input type="checkbox" disabled={!canEditCore} checked={draft.isCarousel} onChange={e => setDraft({...draft, isCarousel: e.target.checked})} className="accent-blue-600" />
+                  Modo Carrossel
                 </label>
               </div>
+              
               {!draft.isCarousel ? (
-                <input disabled={!canEditCore} value={draft.link} placeholder="Cole o link do Google Drive" onChange={e => setDraft({...draft, link: e.target.value})} className="w-full p-2 border rounded-lg outline-none mb-2" />
+                <input disabled={!canEditCore} value={draft.link} placeholder="Cole o link do Google Drive" onChange={e => setDraft({...draft, link: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:border-blue-500 bg-white shadow-inner mb-2 text-sm" />
               ) : (
-                <div className="space-y-2 border p-3 rounded-lg bg-gray-50">
+                <div className="space-y-2">
                   {draft.carousel.map((link, i) => (
-                    <input key={i} disabled={!canEditCore} value={link} placeholder={`Link ${i+1}`} onChange={e => {
+                    <input key={i} disabled={!canEditCore} value={link} placeholder={`Link da Imagem/Vídeo ${i+1}`} onChange={e => {
                       const newC = [...draft.carousel]; newC[i] = e.target.value; setDraft({...draft, carousel: newC});
-                    }} className="w-full p-2 border rounded-lg text-sm" />
+                    }} className="w-full p-3 border border-gray-200 rounded-xl text-sm bg-white shadow-inner" />
                   ))}
                   {canEditCore && draft.carousel.length < 15 && (
-                    <button onClick={() => setDraft({...draft, carousel: [...draft.carousel, '']})} className="text-sm font-semibold text-blue-600 flex items-center gap-1"><Plus size={14}/> Adicionar Link (Máx 15)</button>
+                    <button onClick={() => setDraft({...draft, carousel: [...draft.carousel, '']})} className="text-sm font-bold text-blue-600 flex items-center gap-1 w-full justify-center p-2 hover:bg-blue-50 rounded-lg transition-colors"><Plus size={16}/> Adicionar Slide (+1)</button>
                   )}
                 </div>
               )}
               
-              {/* Preview Iframe do Drive Ampliado e Suporte a Carrossel */}
+              {/* Previews */}
               <div className="mt-4 flex flex-col gap-4">
                 {!draft.isCarousel && draft.link && draft.link.includes('drive.google.com') && (
-                  <iframe src={formatDriveLink(draft.link)} className="w-full h-72 border rounded-xl bg-gray-100 shadow-sm" title="Preview"></iframe>
+                  <iframe src={formatDriveLink(draft.link)} className="w-full h-72 border border-gray-200 rounded-xl bg-white shadow-sm" title="Preview"></iframe>
                 )}
                 {draft.isCarousel && draft.carousel.map((link, idx) => link && link.includes('drive.google.com') && (
                   <div key={idx} className="flex flex-col gap-1">
-                    <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">Preview da Mídia {idx + 1}</span>
-                    <iframe src={formatDriveLink(link)} className="w-full h-72 border rounded-xl bg-gray-100 shadow-sm" title={`Preview ${idx + 1}`}></iframe>
+                    <span className="text-xs font-bold text-gray-400 uppercase">Slide {idx + 1}</span>
+                    <iframe src={formatDriveLink(link)} className="w-full h-72 border border-gray-200 rounded-xl bg-white shadow-sm" title={`Preview ${idx + 1}`}></iframe>
                   </div>
                 ))}
               </div>
             </div>
           </div>
 
-          {/* Coluna Direita: IA, Legenda e Comentários */}
-          <div className="space-y-4 flex flex-col">
+          {/* Coluna Direita */}
+          <div className="space-y-5 flex flex-col">
             <div className="flex-1 flex flex-col">
-              <label className="text-sm font-semibold text-gray-600 block mb-1">Legenda</label>
-              <textarea value={draft.caption} onChange={e => setDraft({...draft, caption: e.target.value})} className="w-full p-2 border rounded-lg outline-none flex-1 min-h-[120px] resize-none mb-2" />
+              <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Legenda (Copy)</label>
+              <textarea value={draft.caption} onChange={e => setDraft({...draft, caption: e.target.value})} className="w-full p-4 border border-gray-200 rounded-xl outline-none focus:border-blue-500 flex-1 min-h-[150px] resize-none mb-3 bg-gray-50/50 leading-relaxed text-gray-700" placeholder="Escreva a legenda ou gere com IA..." />
+              
               {canEditCore && (
-                <div className="bg-blue-50 border border-blue-100 p-3 rounded-lg">
-                  <p className="text-xs font-semibold text-blue-800 mb-2 flex items-center gap-1"><Bot size={14}/> Assistente IA Gemini</p>
-                  <input placeholder="Informações extras para a IA..." value={aiPrompt} onChange={e => setAiPrompt(e.target.value)} className="w-full text-sm p-2 border rounded outline-none mb-2" />
-                  <button onClick={handleAI} disabled={aiLoading} className="w-full bg-blue-600 text-white text-sm font-bold py-2 rounded flex items-center justify-center gap-2 disabled:opacity-50">
-                    {aiLoading ? 'Processando (com fallback)...' : 'Gerar Legenda com IA'}
+                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 p-4 rounded-2xl">
+                  <p className="text-xs font-black text-blue-800 mb-3 flex items-center gap-1.5 uppercase tracking-wider"><Bot size={16}/> Gerador Automático de Legenda (IA)</p>
+                  <input placeholder="Ex: Focar na dor do cliente, tom descontraído..." value={aiPrompt} onChange={e => setAiPrompt(e.target.value)} className="w-full text-sm p-3 border border-white/60 rounded-xl outline-none mb-3 bg-white/80 shadow-inner focus:border-blue-300" />
+                  <button onClick={handleAI} disabled={aiLoading} className="w-full bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold py-3 rounded-xl flex items-center justify-center gap-2 disabled:opacity-50 transition-colors shadow-md">
+                    {aiLoading ? <span className="animate-pulse">Criando magia...</span> : 'Gerar Super Legenda'}
                   </button>
                 </div>
               )}
             </div>
 
-            <div className="border-t pt-4">
-              <label className="text-sm font-semibold text-gray-600 block mb-2">Comentários</label>
-              <div className="bg-gray-50 border rounded-lg p-3 h-40 overflow-y-auto space-y-2 mb-2">
-                {draft.comments.length === 0 && <p className="text-xs text-gray-400 text-center mt-4">Nenhum comentário.</p>}
+            <div className="border-t border-gray-100 pt-5">
+              <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-2">Comentários e Feedbacks</label>
+              <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4 h-48 overflow-y-auto space-y-3 mb-3 custom-scrollbar shadow-inner">
+                {draft.comments.length === 0 && <p className="text-xs font-medium text-gray-400 text-center mt-6">Nenhuma observação ainda.</p>}
                 {draft.comments.map((c, i) => (
-                  <div key={i} className="bg-white p-2 rounded border shadow-sm text-sm">
-                    <div className="flex justify-between items-center text-xs mb-1">
-                      <span className="font-bold text-gray-700 capitalize">{c.author}</span>
-                      <span className="text-gray-400">{new Date(c.date).toLocaleDateString()}</span>
+                  <div key={i} className={`p-3 rounded-xl border text-sm ${c.author === 'empresa' ? 'bg-blue-50 border-blue-100' : 'bg-white border-gray-100 shadow-sm'}`}>
+                    <div className="flex justify-between items-center text-xs mb-1.5">
+                      <span className="font-bold text-gray-800 uppercase tracking-wider">{c.author}</span>
+                      <span className="text-gray-400 font-medium">{new Date(c.date).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short'})}</span>
                     </div>
-                    <p className="text-gray-800">{c.text}</p>
+                    <p className="text-gray-700 leading-relaxed">{c.text}</p>
                   </div>
                 ))}
               </div>
               <div className="flex gap-2">
-                <input value={commentText} onChange={e => setCommentText(e.target.value)} placeholder="Escreva um comentário..." className="flex-1 p-2 border rounded-lg outline-none text-sm" />
+                <input value={commentText} onChange={e => setCommentText(e.target.value)} placeholder="Deixe um comentário para a equipe..." className="flex-1 p-3 border border-gray-200 rounded-xl outline-none text-sm bg-gray-50 focus:bg-white focus:border-blue-400 transition-colors" />
                 <button onClick={() => {
                   if(!commentText.trim()) return;
                   setDraft({...draft, comments: [...draft.comments, { author: user.role, text: commentText, date: new Date().toISOString() }]});
                   setCommentText('');
-                }} className="bg-gray-800 text-white px-4 rounded-lg"><Plus size={16}/></button>
+                }} className="bg-gray-800 hover:bg-black text-white px-5 rounded-xl font-bold shadow-md transition-colors"><Plus size={18}/></button>
               </div>
             </div>
           </div>
         </div>
 
-        <div className="p-4 border-t bg-gray-50 flex justify-end gap-3 rounded-b-2xl">
-          <button onClick={onClose} className="px-5 py-2 font-semibold text-gray-600 hover:bg-gray-200 rounded-xl">Cancelar</button>
-          <button onClick={() => onSave(draft)} className="px-5 py-2 font-semibold text-white rounded-xl shadow-md flex items-center gap-2" style={{ backgroundColor: config.color }}>
-            <Save size={18}/> Salvar Card
+        <div className="p-5 border-t border-gray-100 bg-gray-50 flex justify-end gap-3 rounded-b-2xl">
+          <button onClick={onClose} className="px-6 py-2.5 font-bold text-gray-500 hover:text-gray-800 hover:bg-gray-200 rounded-xl transition-colors">Cancelar</button>
+          <button onClick={() => onSave(draft)} className="px-6 py-2.5 font-bold text-white rounded-xl shadow-lg flex items-center gap-2 transition-transform hover:scale-105" style={{ backgroundColor: config.color }}>
+            <Save size={18}/> Salvar e Fechar
           </button>
         </div>
       </div>
@@ -471,41 +460,40 @@ function CardModal({ card, user, config, onClose, onSave, showToast }) {
   );
 }
 
-function CalendarView({ data, setData, config, onOpenCard }) {
+function CalendarView({ data, config, onOpenCard }) {
   const progCards = data.filter(c => c.col === 'Programados' && c.date).sort((a,b) => new Date(a.date) - new Date(b.date));
   
-  const markAsPosted = (id) => {
-    setData(data.map(c => c.id === id ? { ...c, col: 'Postados' } : c));
-  };
-
   return (
     <div className="max-w-4xl mx-auto">
-      <h1 className="text-2xl font-bold text-gray-800 mb-6">Cronograma de Postagens</h1>
-      <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+      <div className="mb-8">
+        <h1 className="text-3xl font-black">Cronograma de Postagens</h1>
+        <p className="text-sm font-medium opacity-70 mt-1">Visualize os conteúdos com data marcada para ir ao ar.</p>
+      </div>
+      <div className="bg-white/60 backdrop-blur-md p-6 rounded-3xl shadow-sm border border-gray-200/50">
         <div className="space-y-4">
-          {progCards.length === 0 && <p className="text-gray-500 text-center py-8">Nenhum post programado com data definida.</p>}
+          {progCards.length === 0 && (
+            <div className="text-center py-12">
+              <CalendarDays size={48} className="mx-auto mb-4 opacity-20" />
+              <p className="font-bold opacity-60">Nenhum post programado com data definida.</p>
+            </div>
+          )}
           {progCards.map(c => (
-            <div key={c.id} className="flex items-center p-4 border-l-4 rounded-r-xl bg-gray-50 hover:bg-gray-100 transition-colors" style={{ borderLeftColor: config.color }}>
-              <div className="w-32 flex-shrink-0 text-center border-r border-gray-200 pr-4">
-                <p className="text-2xl font-bold" style={{ color: config.color }}>{new Date(c.date).getDate() + 1}</p>
-                <p className="text-xs uppercase font-bold text-gray-500">{new Date(c.date).toLocaleString('pt-BR', { month: 'short', year: 'numeric' })}</p>
+            <div key={c.id} className="flex flex-col md:flex-row md:items-center p-5 border-l-[6px] rounded-r-2xl bg-white shadow-sm hover:shadow-md transition-shadow group" style={{ borderLeftColor: config.color }}>
+              <div className="w-full md:w-32 flex-shrink-0 text-center border-b md:border-b-0 md:border-r border-gray-100 pb-3 md:pb-0 md:pr-5 mb-3 md:mb-0">
+                <p className="text-3xl font-black" style={{ color: config.color }}>{new Date(c.date).getDate() + 1}</p>
+                <p className="text-xs uppercase font-black opacity-40">{new Date(c.date).toLocaleString('pt-BR', { month: 'long', year: 'numeric' })}</p>
               </div>
-              <div className="pl-4 flex-1">
-                <h3 className="font-bold text-lg text-gray-800">{c.title}</h3>
-                <p className="text-sm text-gray-600 truncate max-w-md">{c.caption || c.desc}</p>
+              <div className="md:pl-5 flex-1 mb-4 md:mb-0">
+                <h3 className="font-black text-lg group-hover:text-blue-600 transition-colors">{c.title}</h3>
+                <p className="text-sm opacity-70 line-clamp-2 mt-1">{c.caption || c.desc}</p>
               </div>
-              <div className="px-4 flex flex-col gap-2 items-end">
-                <span className="text-xs font-bold bg-white shadow-sm py-1 px-3 rounded-full text-gray-600 border">
-                  Programado
+              <div className="md:px-4 flex flex-row md:flex-col gap-2 items-start md:items-end w-full md:w-auto">
+                <span className="text-xs font-bold bg-gray-100 py-1.5 px-4 rounded-full border border-gray-200 uppercase tracking-wider opacity-80">
+                  Agendado
                 </span>
-                <div className="flex gap-2">
-                  <button onClick={() => onOpenCard(c.id)} className="text-xs font-bold bg-blue-500 hover:bg-blue-600 text-white py-1 px-3 rounded-full transition-colors shadow-sm">
-                    Abrir no Kanban
-                  </button>
-                  <button onClick={() => markAsPosted(c.id)} className="text-xs font-bold bg-green-500 hover:bg-green-600 text-white py-1 px-3 rounded-full transition-colors shadow-sm">
-                    Postado
-                  </button>
-                </div>
+                <button onClick={() => onOpenCard(c.id)} className="text-xs font-bold bg-gray-800 hover:bg-black text-white py-1.5 px-4 rounded-full transition-colors shadow-sm w-full md:w-auto">
+                  Ver no Kanban
+                </button>
               </div>
             </div>
           ))}
@@ -515,10 +503,20 @@ function CalendarView({ data, setData, config, onOpenCard }) {
   );
 }
 
-function TrafficView({ data, setData, user, config }) {
+function TrafficView({ data, setData, user, config, showToast }) {
+  const [activeTab, setActiveTab] = useState('looker'); // 'manual', 'looker', 'ai'
   const [expandedId, setExpandedId] = useState(null);
-  const [newMetric, setNewMetric] = useState({ reportId: null, label: '' });
-  const [editLink, setEditLink] = useState({ reportId: null, url: '' });
+  
+  // IA Report State
+  const [aiReport, setAiReport] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+
+  // Formata a URL do Looker Studio para Embed automaticamente
+  const getEmbedUrl = (url) => {
+    if(!url) return '';
+    if(url.includes('/embed/')) return url;
+    return url.replace('/u/0/reporting/', '/embed/reporting/').replace('/reporting/', '/embed/reporting/');
+  };
 
   const addReport = () => {
     const newRep = { id: Date.now(), date: new Date().toISOString().split('T')[0], leads: 0, cost: '0', contracts: 0, attachment: '', custom: [] };
@@ -526,83 +524,158 @@ function TrafficView({ data, setData, user, config }) {
     setExpandedId(newRep.id);
   };
 
+  const generateAIReport = async () => {
+    setAiLoading(true);
+    try {
+      // Pega o relatório mais recente salvo nas métricas manuais
+      const lastRep = data[0]; 
+      const metricsText = lastRep ? `Leads: ${lastRep.leads}, Custo por Lead: R$ ${lastRep.cost}, Contratos: ${lastRep.contracts}. ` + lastRep.custom.map(c => `${c.label}: ${c.value}`).join(', ') : "Sem dados cadastrados ainda.";
+      
+      const prompt = `Gere um Relatório de Performance Executivo com base nos seguintes dados recentes: ${metricsText}. Divida o relatório em: "Resumo Executivo", "Análise de Plataformas (Google Ads x Meta Ads)", "Eficiência e Custo", e "Recomendações Práticas". Faça com uma linguagem profissional de agência de marketing para o cliente.`;
+      const sysInst = "Você é um Analista Senior de Performance de Marketing. Produza um relatório claro, direto e focado em resultados, destacando a eficiência e recomendando próximos passos de investimento.";
+
+      const { text, model } = await callGeminiAPI(prompt, sysInst, config, showToast);
+      setAiReport(text);
+      showToast(`Relatório IA gerado com sucesso (${model})!`);
+    } catch (e) {
+      showToast(e.message);
+    } finally {
+      setAiLoading(false);
+    }
+  };
+
   return (
-    <div className="max-w-4xl mx-auto">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold text-gray-800">Relatórios de Tráfego</h1>
-        {user.role === 'gestor' && (
-          <button onClick={addReport} className="flex items-center gap-2 text-white px-4 py-2 rounded-xl shadow-md" style={{ backgroundColor: config.color }}>
-            <Plus size={18} /> Nova Análise
+    <div className="max-w-6xl mx-auto flex flex-col h-full">
+      <div className="flex flex-col md:flex-row md:justify-between md:items-end mb-8 gap-4">
+        <div>
+          <h1 className="text-3xl font-black">Performance & Business Intelligence</h1>
+          <p className="text-sm font-medium opacity-70 mt-1">Acompanhe métricas, veja dashboards em tempo real e relatórios de IA.</p>
+        </div>
+        
+        {/* Navegação de Abas */}
+        <div className="flex bg-gray-200/50 p-1 rounded-xl w-fit">
+          <button onClick={() => setActiveTab('looker')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'looker' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}>
+            <BarChart3 size={16}/> Dashboard Google
           </button>
-        )}
+          <button onClick={() => setActiveTab('manual')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'manual' ? 'bg-white shadow-sm text-green-600' : 'text-gray-500 hover:text-gray-800'}`}>
+            <TrendingUp size={16}/> Inserção Manual
+          </button>
+          <button onClick={() => setActiveTab('ai')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'ai' ? 'bg-white shadow-sm text-purple-600' : 'text-gray-500 hover:text-gray-800'}`}>
+            <BrainCircuit size={16}/> Relatório IA
+          </button>
+        </div>
       </div>
 
-      <div className="space-y-4">
-        {data.map((rep, idx) => (
-          <div key={rep.id} className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-            <div onClick={() => setExpandedId(expandedId === rep.id ? null : rep.id)} className="p-4 flex justify-between items-center cursor-pointer hover:bg-gray-50">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full flex items-center justify-center bg-green-100 text-green-600"><TrendingUp size={20}/></div>
-                <div>
-                  <h3 className="font-bold text-gray-800">Análise de Desempenho</h3>
-                  <p className="text-sm text-gray-500">Realizada em {new Date(rep.date).toLocaleDateString('pt-BR')}</p>
-                </div>
-              </div>
-              {expandedId === rep.id ? <ChevronUp /> : <ChevronDown />}
+      {/* ABA 1: LOOKER STUDIO */}
+      {activeTab === 'looker' && (
+        <div className="flex-1 bg-white rounded-3xl shadow-sm border border-gray-200/50 overflow-hidden flex flex-col min-h-[600px]">
+          {config.lookerStudioUrl ? (
+            <iframe src={getEmbedUrl(config.lookerStudioUrl)} frameBorder="0" style={{ border: 0 }} allowFullScreen className="w-full h-full flex-1 min-h-[700px]"></iframe>
+          ) : (
+            <div className="flex flex-col items-center justify-center h-full flex-1 p-12 text-center opacity-60">
+              <BarChart3 size={64} className="mb-4" />
+              <h3 className="text-xl font-bold">Looker Studio não configurado</h3>
+              <p className="text-sm mt-2">O Gestor precisa inserir a URL do Looker Studio na aba de Configurações.</p>
             </div>
+          )}
+        </div>
+      )}
 
-            {expandedId === rep.id && (
-              <div className="p-6 border-t bg-gray-50 grid grid-cols-2 md:grid-cols-4 gap-4">
-                <MetricBox label="Leads" val={rep.leads} onChange={v => { const n = [...data]; n[idx].leads = v; setData(n); }} edit={user.role === 'gestor'} />
-                <MetricBox label="Custo / Lead" val={`R$ ${rep.cost}`} onChange={v => { const n = [...data]; n[idx].cost = v.replace('R$ ', ''); setData(n); }} edit={user.role === 'gestor'} />
-                <MetricBox label="Contratos Fechados" val={rep.contracts} onChange={v => { const n = [...data]; n[idx].contracts = v; setData(n); }} edit={user.role === 'gestor'} />
-                
-                {rep.custom.map((c, cidx) => (
-                  <MetricBox key={cidx} label={c.label} val={c.value} onChange={v => { const n = [...data]; n[idx].custom[cidx].value = v; setData(n); }} edit={user.role === 'gestor'} />
-                ))}
-
-                {user.role === 'gestor' && (
-                  <div className="col-span-full border border-dashed border-gray-300 p-4 rounded-xl flex flex-col items-center justify-center bg-gray-50">
-                    {newMetric.reportId === rep.id ? (
-                      <div className="flex w-full gap-2">
-                        <input autoFocus value={newMetric.label} onChange={e => setNewMetric({...newMetric, label: e.target.value})} placeholder="Nome da métrica..." className="flex-1 p-2 border rounded outline-none text-sm" />
-                        <button onClick={() => { if(newMetric.label) { const n = [...data]; n[idx].custom.push({ label: newMetric.label, value: '0' }); setData(n); } setNewMetric({reportId: null, label: ''}); }} className="bg-blue-600 text-white px-3 rounded text-sm font-bold">Salvar</button>
-                        <button onClick={() => setNewMetric({reportId: null, label: ''})} className="bg-gray-200 text-gray-700 px-3 rounded text-sm font-bold">Cancelar</button>
-                      </div>
-                    ) : (
-                      <button onClick={() => setNewMetric({ reportId: rep.id, label: '' })} className="text-sm font-semibold text-gray-500 hover:text-blue-600 w-full h-full p-2">+ Adicionar Métrica Personalizada</button>
-                    )}
-                  </div>
-                )}
-                <div className="col-span-full mt-2 flex flex-col gap-2">
-                  <div className="flex items-center gap-2">
-                    <a href={rep.attachment || '#'} target="_blank" rel="noreferrer" onClick={e => !rep.attachment && e.preventDefault()} className={`px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 ${rep.attachment ? 'text-blue-600 bg-blue-50 hover:bg-blue-100' : 'text-gray-400 bg-gray-100 cursor-not-allowed'}`}><LinkIcon size={14}/> Ver Relatório Completo (Drive/PDF)</a>
-                    {user.role === 'gestor' && <button onClick={() => setEditLink({ reportId: rep.id, url: rep.attachment })} className="text-gray-500 text-sm hover:text-blue-600 font-semibold px-2">Editar Link</button>}
-                  </div>
-                  {editLink.reportId === rep.id && (
-                    <div className="flex gap-2 mt-2 w-full max-w-md">
-                       <input autoFocus value={editLink.url} onChange={e => setEditLink({...editLink, url: e.target.value})} placeholder="https://..." className="flex-1 p-2 border rounded outline-none text-sm" />
-                       <button onClick={() => { const n = [...data]; n[idx].attachment = editLink.url; setData(n); setEditLink({reportId: null, url: ''}); }} className="bg-blue-600 text-white px-3 rounded text-sm font-bold">Salvar Link</button>
-                    </div>
-                  )}
-                </div>
+      {/* ABA 2: RELATÓRIO IA (Gemini) */}
+      {activeTab === 'ai' && (
+        <div className="flex-1 max-w-4xl w-full mx-auto bg-white rounded-3xl shadow-sm border border-gray-200/50 p-8">
+          <div className="flex items-center justify-between mb-6 pb-6 border-b border-gray-100">
+            <div>
+              <h2 className="text-2xl font-black text-gray-800 flex items-center gap-2"><BrainCircuit className="text-purple-600"/> Analista Virtual Azione</h2>
+              <p className="text-sm text-gray-500 mt-1 font-medium">Gera análises executivas profundas baseadas nas suas últimas métricas cadastradas.</p>
+            </div>
+            <button onClick={generateAIReport} disabled={aiLoading} className="bg-purple-600 hover:bg-purple-700 text-white font-bold px-6 py-3 rounded-xl shadow-lg transition-transform hover:scale-105 disabled:opacity-50 flex items-center gap-2">
+              {aiLoading ? <span className="animate-pulse">Analisando Dados...</span> : <><FileSearch size={18}/> Gerar Novo Relatório</>}
+            </button>
+          </div>
+          
+          <div className="bg-gray-50 rounded-2xl p-6 min-h-[400px] border border-gray-100">
+            {!aiReport && !aiLoading && <div className="text-center py-20 opacity-40 font-bold">Clique no botão acima para gerar um relatório inteligente de performance.</div>}
+            {aiLoading && <div className="text-center py-20 font-bold text-purple-600 animate-pulse">Consultando a IA do Google... aguarde.</div>}
+            {aiReport && !aiLoading && (
+              <div className="prose prose-purple max-w-none">
+                {/* Processamento super simples de Markdown para bold e quebras de linha */}
+                {aiReport.split('\n').map((line, i) => {
+                  if(line.startsWith('##')) return <h3 key={i} className="text-xl font-black mt-6 mb-3 text-gray-800 border-b pb-2">{line.replace(/#/g, '')}</h3>;
+                  if(line.startsWith('#')) return <h2 key={i} className="text-2xl font-black mt-8 mb-4 text-purple-900">{line.replace(/#/g, '')}</h2>;
+                  if(line.startsWith('* ') || line.startsWith('- ')) return <li key={i} className="ml-4 mb-1 text-gray-700">{line.substring(2)}</li>;
+                  return <p key={i} className="mb-3 text-gray-700 leading-relaxed" dangerouslySetInnerHTML={{__html: line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}}></p>;
+                })}
               </div>
             )}
           </div>
-        ))}
-      </div>
+        </div>
+      )}
+
+      {/* ABA 3: INSERÇÃO MANUAL DE DADOS */}
+      {activeTab === 'manual' && (
+        <div className="max-w-4xl w-full mx-auto space-y-4">
+          {user.role === 'gestor' && (
+            <div className="flex justify-end mb-4">
+              <button onClick={addReport} className="flex items-center gap-2 text-white px-5 py-2.5 rounded-xl shadow-lg font-bold transition-transform hover:scale-105" style={{ backgroundColor: config.color }}>
+                <Plus size={18} /> Nova Análise Manual
+              </button>
+            </div>
+          )}
+          {data.map((rep, idx) => (
+            <div key={rep.id} className="bg-white rounded-2xl shadow-sm border border-gray-200/50 overflow-hidden">
+              <div onClick={() => setExpandedId(expandedId === rep.id ? null : rep.id)} className="p-5 flex justify-between items-center cursor-pointer hover:bg-gray-50 transition-colors">
+                <div className="flex items-center gap-4">
+                  <div className="w-12 h-12 rounded-xl flex items-center justify-center shadow-inner" style={{ backgroundColor: `${config.secondaryColor}20`, color: config.secondaryColor }}><TrendingUp size={24}/></div>
+                  <div>
+                    <h3 className="font-bold text-lg text-gray-800">Fechamento de Performance</h3>
+                    <p className="text-sm font-semibold opacity-60">Referência: {new Date(rep.date).toLocaleDateString('pt-BR')} (Clique para expandir)</p>
+                  </div>
+                </div>
+                <div className="bg-gray-100 p-2 rounded-full text-gray-500">
+                  {expandedId === rep.id ? <ChevronUp size={20}/> : <ChevronDown size={20}/>}
+                </div>
+              </div>
+
+              {expandedId === rep.id && (
+                <div className="p-6 border-t border-gray-100 bg-gray-50/50 grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <MetricBox label="Leads Totais" val={rep.leads} onChange={v => { const n = [...data]; n[idx].leads = v; setData(n); }} edit={user.role === 'gestor'} color={config.color} />
+                  <MetricBox label="Custo / Lead" val={`R$ ${rep.cost}`} onChange={v => { const n = [...data]; n[idx].cost = v.replace('R$ ', ''); setData(n); }} edit={user.role === 'gestor'} color={config.color} />
+                  <MetricBox label="Contratos" val={rep.contracts} onChange={v => { const n = [...data]; n[idx].contracts = v; setData(n); }} edit={user.role === 'gestor'} color={config.color} />
+                  
+                  {rep.custom.map((c, cidx) => (
+                    <MetricBox key={cidx} label={c.label} val={c.value} onChange={v => { const n = [...data]; n[idx].custom[cidx].value = v; setData(n); }} edit={user.role === 'gestor'} color={config.color} />
+                  ))}
+
+                  {user.role === 'gestor' && (
+                    <div className="col-span-full border-2 border-dashed border-gray-300 p-4 rounded-2xl flex flex-col items-center justify-center bg-white hover:bg-gray-50 transition-colors">
+                       <button onClick={() => { const label = prompt("Nome da nova métrica:"); if(label) { const n = [...data]; n[idx].custom.push({ label, value: '0' }); setData(n); } }} className="text-sm font-bold text-gray-500 hover:text-blue-600 w-full p-2">+ Adicionar Métrica Personalizada (Ex: Alcance)</button>
+                    </div>
+                  )}
+                  <div className="col-span-full mt-2 flex flex-col gap-2">
+                    <div className="flex items-center gap-2">
+                      <a href={rep.attachment || '#'} target="_blank" rel="noreferrer" onClick={e => !rep.attachment && e.preventDefault()} className={`px-5 py-2.5 rounded-xl text-sm font-bold flex items-center gap-2 shadow-sm ${rep.attachment ? 'text-white hover:opacity-90' : 'text-gray-400 bg-gray-200 cursor-not-allowed'}`} style={rep.attachment ? {backgroundColor: config.secondaryColor} : {}}><LinkIcon size={16}/> Ver PDF Completo Anexado</a>
+                      {user.role === 'gestor' && <button onClick={() => { const url = prompt("Link do PDF/Drive:"); if(url!==null) { const n = [...data]; n[idx].attachment = url; setData(n); } }} className="text-gray-500 hover:text-gray-800 text-sm font-bold px-3 py-2 bg-gray-200 rounded-xl">Editar Link</button>}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
-function MetricBox({ label, val, onChange, edit }) {
+function MetricBox({ label, val, onChange, edit, color }) {
   return (
-    <div className="bg-white p-4 rounded-xl border shadow-sm flex flex-col justify-center items-center text-center">
-      <span className="text-xs text-gray-500 font-bold uppercase tracking-wider mb-1">{label}</span>
+    <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-center items-center text-center">
+      <span className="text-[10px] text-gray-500 font-black uppercase tracking-widest mb-2">{label}</span>
       {edit ? (
-        <input value={val} onChange={e => onChange(e.target.value)} className="font-bold text-xl text-gray-800 text-center w-full outline-none border-b focus:border-blue-500" />
+        <input value={val} onChange={e => onChange(e.target.value)} className="font-black text-2xl text-center w-full outline-none border-b-2 focus:border-opacity-100 border-transparent transition-colors" style={{ color: color, focusBorderColor: color }} />
       ) : (
-        <span className="font-bold text-xl text-gray-800">{val}</span>
+        <span className="font-black text-2xl" style={{ color: color }}>{val}</span>
       )}
     </div>
   );
@@ -614,108 +687,105 @@ function FinanceView({ data, setData, user, config, showToast }) {
   const copyPix = (pix) => {
     if(!pix) return showToast("Nenhuma chave PIX cadastrada!");
     const el = document.createElement('textarea'); el.value = pix; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el);
-    showToast("Chave PIX copiada!");
+    showToast("Chave PIX copiada com sucesso!");
   };
 
   const handleSaveModal = (updatedFin) => {
-    if(updatedFin.id === 'new') {
-      setData([...data, { ...updatedFin, id: Date.now() }]);
-    } else {
-      setData(data.map(d => d.id === updatedFin.id ? updatedFin : d));
-    }
+    if(updatedFin.id === 'new') setData([...data, { ...updatedFin, id: Date.now() }]);
+    else setData(data.map(d => d.id === updatedFin.id ? updatedFin : d));
     setEditingFin(null);
   };
 
-  const handleDelete = (id) => {
-    setData(data.filter(d => d.id !== id));
-    showToast("Fatura apagada!");
-  };
-
   return (
-    <div className="max-w-4xl mx-auto">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold text-gray-800">Financeiro</h1>
+    <div className="max-w-5xl mx-auto">
+      <div className="flex justify-between items-center mb-8">
+        <div>
+          <h1 className="text-3xl font-black">Departamento Financeiro</h1>
+          <p className="text-sm font-medium opacity-70 mt-1">Controle de faturas, boletos, PIX e Notas Fiscais.</p>
+        </div>
         {user.role === 'gestor' && (
-          <button onClick={() => setEditingFin({ id: 'new', desc: 'Nova Cobrança', due: '', pix: '', boleto: '', nf: '', status: 'Pendente' })} className="flex items-center gap-2 text-white px-4 py-2 rounded-xl shadow-md" style={{ backgroundColor: config.color }}>
+          <button onClick={() => setEditingFin({ id: 'new', desc: 'Nova Cobrança Mensalidade', due: '', pix: '', boleto: '', nf: '', status: 'Pendente' })} className="flex items-center gap-2 text-white px-5 py-2.5 rounded-xl shadow-lg font-bold transition-transform hover:scale-105" style={{ backgroundColor: config.color }}>
             <Plus size={18} /> Nova Fatura
           </button>
         )}
       </div>
 
-      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
+      <div className="bg-white/60 backdrop-blur-md rounded-3xl shadow-sm border border-gray-200/50 overflow-hidden">
         <table className="w-full text-left border-collapse">
           <thead>
-            <tr className="bg-gray-50 text-gray-600 text-sm uppercase">
-              <th className="p-4 font-bold">Descrição</th>
-              <th className="p-4 font-bold">Vencimento</th>
-              <th className="p-4 font-bold">Status</th>
-              <th className="p-4 font-bold text-right">Ações</th>
+            <tr className="bg-gray-100/50 text-sm uppercase tracking-wider font-bold opacity-70 border-b border-gray-200/50">
+              <th className="p-5">Descrição do Serviço</th>
+              <th className="p-5">Vencimento</th>
+              <th className="p-5">Status</th>
+              <th className="p-5 text-right">Ações e Documentos</th>
             </tr>
           </thead>
           <tbody>
             {data.map((fin) => (
-              <tr key={fin.id} className="border-t border-gray-100 hover:bg-gray-50">
-                <td className="p-4 font-semibold text-gray-800">{fin.desc}</td>
-                <td className="p-4 text-gray-600">{fin.due ? new Date(fin.due).toLocaleDateString('pt-BR') : 'N/A'}</td>
-                <td className="p-4">
-                  <span className={`px-2 py-1 rounded-full text-xs font-bold ${fin.status === 'Pago' ? 'bg-green-100 text-green-700' : 'bg-yellow-100 text-yellow-700'}`}>
+              <tr key={fin.id} className="border-b border-gray-100 hover:bg-white transition-colors">
+                <td className="p-5 font-black text-gray-800 text-lg">{fin.desc}</td>
+                <td className="p-5 font-semibold opacity-80">{fin.due ? new Date(fin.due).toLocaleDateString('pt-BR') : 'N/A'}</td>
+                <td className="p-5">
+                  <span className={`px-3 py-1.5 rounded-full text-xs font-black uppercase tracking-wide border shadow-sm ${fin.status === 'Pago' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-yellow-50 text-yellow-700 border-yellow-200'}`}>
                     {fin.status || 'Pendente'}
                   </span>
                 </td>
-                <td className="p-4 flex gap-2 justify-end">
-                  <button onClick={() => copyPix(fin.pix)} className="p-2 bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200 tooltip" title="Copiar PIX"><Copy size={16}/></button>
-                  <a href={fin.boleto || '#'} target="_blank" rel="noreferrer" onClick={e => !fin.boleto && e.preventDefault()} className={`p-2 rounded-lg ${fin.boleto ? 'bg-blue-50 text-blue-600 hover:bg-blue-100' : 'bg-gray-50 text-gray-300 cursor-not-allowed'}`} title="Baixar Boleto"><FileText size={16}/></a>
-                  <a href={fin.nf || '#'} target="_blank" rel="noreferrer" onClick={e => !fin.nf && e.preventDefault()} className={`p-2 rounded-lg ${fin.nf ? 'bg-green-50 text-green-600 hover:bg-green-100' : 'bg-gray-50 text-gray-300 cursor-not-allowed'}`} title="Baixar NF"><Download size={16}/></a>
+                <td className="p-5 flex gap-2 justify-end">
+                  <button onClick={() => copyPix(fin.pix)} className="p-2.5 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 shadow-sm transition-colors" title="Copiar PIX"><Copy size={18}/></button>
+                  <a href={fin.boleto || '#'} target="_blank" rel="noreferrer" onClick={e => !fin.boleto && e.preventDefault()} className={`p-2.5 rounded-xl shadow-sm transition-colors ${fin.boleto ? 'bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-100' : 'bg-gray-50 text-gray-300 cursor-not-allowed border border-gray-100'}`} title="Baixar Boleto"><FileText size={18}/></a>
+                  <a href={fin.nf || '#'} target="_blank" rel="noreferrer" onClick={e => !fin.nf && e.preventDefault()} className={`p-2.5 rounded-xl shadow-sm transition-colors ${fin.nf ? 'bg-green-50 text-green-600 hover:bg-green-100 border border-green-100' : 'bg-gray-50 text-gray-300 cursor-not-allowed border border-gray-100'}`} title="Baixar NF"><Download size={18}/></a>
                   {user.role === 'gestor' && (
                     <>
-                      <button onClick={() => setEditingFin(fin)} className="p-2 bg-yellow-50 text-yellow-600 rounded-lg hover:bg-yellow-100 tooltip" title="Editar"><Edit3 size={16}/></button>
-                      <button onClick={() => handleDelete(fin.id)} className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 tooltip" title="Apagar"><Trash2 size={16}/></button>
+                      <div className="w-px bg-gray-200 mx-1"></div>
+                      <button onClick={() => setEditingFin(fin)} className="p-2.5 bg-yellow-50 text-yellow-600 rounded-xl hover:bg-yellow-100 border border-yellow-100 shadow-sm" title="Editar"><Edit3 size={18}/></button>
+                      <button onClick={() => {setData(data.filter(d => d.id !== fin.id)); showToast("Fatura apagada!");}} className="p-2.5 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 border border-red-100 shadow-sm" title="Apagar"><Trash2 size={18}/></button>
                     </>
                   )}
                 </td>
               </tr>
             ))}
-            {data.length === 0 && <tr><td colSpan="4" className="p-4 text-center text-gray-500">Nenhuma fatura encontrada.</td></tr>}
+            {data.length === 0 && <tr><td colSpan="4" className="p-10 text-center font-bold opacity-50">Nenhuma fatura encontrada no sistema.</td></tr>}
           </tbody>
         </table>
       </div>
 
+      {/* Modal Finanças igual ao anterior, reestilizado */}
       {editingFin && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl space-y-4">
-            <h3 className="text-xl font-bold border-b pb-2">Detalhes da Fatura</h3>
+        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl space-y-5 text-gray-800">
+            <h3 className="text-2xl font-black border-b border-gray-100 pb-4">Detalhes da Cobrança</h3>
             <div>
-              <label className="text-sm font-semibold text-gray-600 block mb-1">Descrição</label>
-              <input value={editingFin.desc} onChange={e => setEditingFin({...editingFin, desc: e.target.value})} className="w-full p-2 border rounded-lg outline-none" />
+              <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Descrição do Serviço</label>
+              <input value={editingFin.desc} onChange={e => setEditingFin({...editingFin, desc: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none font-bold bg-gray-50 focus:bg-white" />
             </div>
             <div className="flex gap-4">
               <div className="flex-1">
-                <label className="text-sm font-semibold text-gray-600 block mb-1">Vencimento</label>
-                <input type="date" value={editingFin.due} onChange={e => setEditingFin({...editingFin, due: e.target.value})} className="w-full p-2 border rounded-lg outline-none" />
+                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Vencimento</label>
+                <input type="date" value={editingFin.due} onChange={e => setEditingFin({...editingFin, due: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none bg-gray-50 focus:bg-white" />
               </div>
               <div className="flex-1">
-                <label className="text-sm font-semibold text-gray-600 block mb-1">Status</label>
-                <select value={editingFin.status || 'Pendente'} onChange={e => setEditingFin({...editingFin, status: e.target.value})} className="w-full p-2 border rounded-lg outline-none bg-white">
+                <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Status</label>
+                <select value={editingFin.status || 'Pendente'} onChange={e => setEditingFin({...editingFin, status: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none font-bold bg-gray-50 focus:bg-white">
                   <option value="Pendente">Pendente</option>
                   <option value="Pago">Pago</option>
                 </select>
               </div>
             </div>
             <div>
-              <label className="text-sm font-semibold text-gray-600 block mb-1">Chave PIX</label>
-              <input value={editingFin.pix} onChange={e => setEditingFin({...editingFin, pix: e.target.value})} className="w-full p-2 border rounded-lg outline-none" placeholder="000.000.000-00" />
+              <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Chave PIX</label>
+              <input value={editingFin.pix} onChange={e => setEditingFin({...editingFin, pix: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none bg-gray-50 focus:bg-white" placeholder="Celular, CNPJ, Email ou Aleatória..." />
             </div>
             <div>
-              <label className="text-sm font-semibold text-gray-600 block mb-1">Link do Boleto (Drive/PDF)</label>
-              <input value={editingFin.boleto} onChange={e => setEditingFin({...editingFin, boleto: e.target.value})} className="w-full p-2 border rounded-lg outline-none" placeholder="https://..." />
+              <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Link do Boleto (Google Drive/PDF)</label>
+              <input value={editingFin.boleto} onChange={e => setEditingFin({...editingFin, boleto: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none bg-gray-50 focus:bg-white text-sm" placeholder="https://..." />
             </div>
             <div>
-              <label className="text-sm font-semibold text-gray-600 block mb-1">Link da Nota Fiscal (Drive/PDF)</label>
-              <input value={editingFin.nf} onChange={e => setEditingFin({...editingFin, nf: e.target.value})} className="w-full p-2 border rounded-lg outline-none" placeholder="https://..." />
+              <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Link da Nota Fiscal (Google Drive/PDF)</label>
+              <input value={editingFin.nf} onChange={e => setEditingFin({...editingFin, nf: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none bg-gray-50 focus:bg-white text-sm" placeholder="https://..." />
             </div>
-            <div className="flex justify-end gap-2 pt-4">
-              <button onClick={() => setEditingFin(null)} className="px-5 py-2 font-semibold text-gray-600 hover:bg-gray-100 rounded-xl">Cancelar</button>
-              <button onClick={() => handleSaveModal(editingFin)} className="px-5 py-2 font-semibold text-white rounded-xl shadow-md" style={{ backgroundColor: config.color }}>Salvar Fatura</button>
+            <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
+              <button onClick={() => setEditingFin(null)} className="px-6 py-3 font-bold text-gray-500 hover:bg-gray-100 rounded-xl transition-colors">Cancelar</button>
+              <button onClick={() => handleSaveModal(editingFin)} className="px-6 py-3 font-bold text-white rounded-xl shadow-lg transition-transform hover:scale-105" style={{ backgroundColor: config.color }}>Salvar Fatura</button>
             </div>
           </div>
         </div>
@@ -728,41 +798,44 @@ function DocsView({ data, setData, user, config }) {
   const [editingDocLink, setEditingDocLink] = useState(null);
 
   return (
-    <div className="max-w-4xl mx-auto">
-      <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold text-gray-800">Documentos e Contratos</h1>
+    <div className="max-w-5xl mx-auto">
+      <div className="flex justify-between items-center mb-8">
+        <div>
+          <h1 className="text-3xl font-black">Documentos Oficiais</h1>
+          <p className="text-sm font-medium opacity-70 mt-1">Acesso a contratos, aditivos e propostas.</p>
+        </div>
         {user.role === 'gestor' && (
-          <button onClick={() => setData([...data, { id: Date.now(), title: 'Novo Doc', date: '', link: '' }])} className="flex items-center gap-2 text-white px-4 py-2 rounded-xl shadow-md" style={{ backgroundColor: config.color }}>
-            <Plus size={18} /> Upload Documento
+          <button onClick={() => setData([...data, { id: Date.now(), title: 'Novo Documento Legal', date: '', link: '' }])} className="flex items-center gap-2 text-white px-5 py-2.5 rounded-xl shadow-lg font-bold transition-transform hover:scale-105" style={{ backgroundColor: config.color }}>
+            <Plus size={18} /> Upload de Arquivo
           </button>
         )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
         {data.map((doc, idx) => (
-          <div key={doc.id} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 flex flex-col gap-3">
+          <div key={doc.id} className="bg-white/60 backdrop-blur-md p-6 rounded-3xl shadow-sm border border-gray-200/50 flex flex-col gap-4 hover:shadow-md transition-shadow">
             <div className="flex items-center justify-between w-full">
-              <div className="flex items-center gap-4 w-full pr-2">
-                <div className="w-12 h-12 rounded-xl flex-shrink-0 flex items-center justify-center bg-red-50 text-red-500"><FileText size={24}/></div>
+              <div className="flex items-center gap-5 w-full pr-2">
+                <div className="w-14 h-14 rounded-2xl flex-shrink-0 flex items-center justify-center shadow-inner" style={{ backgroundColor: `${config.secondaryColor}20`, color: config.secondaryColor }}><FileText size={28}/></div>
                 <div className="w-full">
-                  {user.role === 'gestor' ? <input value={doc.title} onChange={e => { const n = [...data]; n[idx].title = e.target.value; setData(n); }} className="font-bold border-b outline-none text-gray-800 w-full" placeholder="Título do Documento" /> : <h3 className="font-bold text-gray-800">{doc.title}</h3>}
-                  {user.role === 'gestor' ? <input type="date" value={doc.date} onChange={e => { const n = [...data]; n[idx].date = e.target.value; setData(n); }} className="text-xs border-b outline-none text-gray-500 mt-1 w-full" /> : <p className="text-xs text-gray-500 mt-1">Data: {new Date(doc.date).toLocaleDateString('pt-BR')}</p>}
+                  {user.role === 'gestor' ? <input value={doc.title} onChange={e => { const n = [...data]; n[idx].title = e.target.value; setData(n); }} className="font-black text-lg border-b-2 border-transparent focus:border-gray-300 bg-transparent outline-none text-gray-800 w-full transition-colors" placeholder="Título Legal..." /> : <h3 className="font-black text-lg text-gray-800">{doc.title}</h3>}
+                  {user.role === 'gestor' ? <input type="date" value={doc.date} onChange={e => { const n = [...data]; n[idx].date = e.target.value; setData(n); }} className="text-xs font-bold opacity-60 bg-transparent outline-none mt-1 w-full" /> : <p className="text-xs font-bold opacity-60 mt-1">Data Assinatura: {new Date(doc.date).toLocaleDateString('pt-BR')}</p>}
                 </div>
               </div>
               <div className="flex gap-2">
                 {user.role === 'gestor' && (
                   <>
-                    <button onClick={() => setEditingDocLink(editingDocLink === doc.id ? null : doc.id)} className="p-2 text-gray-400 hover:text-blue-600"><Edit3 size={18}/></button>
-                    <button onClick={() => setData(data.filter(d => d.id !== doc.id))} className="p-2 text-red-400 hover:text-red-600"><Trash2 size={18}/></button>
+                    <button onClick={() => setEditingDocLink(editingDocLink === doc.id ? null : doc.id)} className="p-3 bg-gray-100 rounded-xl hover:bg-gray-200 text-gray-600 transition-colors"><Edit3 size={18}/></button>
+                    <button onClick={() => setData(data.filter(d => d.id !== doc.id))} className="p-3 bg-red-50 rounded-xl hover:bg-red-100 text-red-600 transition-colors"><Trash2 size={18}/></button>
                   </>
                 )}
-                <a href={doc.link || '#'} target="_blank" rel="noreferrer" onClick={e => !doc.link && e.preventDefault()} className={`p-2 rounded-lg ${doc.link ? 'bg-gray-100 text-gray-700 hover:bg-gray-200' : 'bg-gray-50 text-gray-300 cursor-not-allowed'}`}><Download size={18}/></a>
+                <a href={doc.link || '#'} target="_blank" rel="noreferrer" onClick={e => !doc.link && e.preventDefault()} className={`p-3 rounded-xl transition-colors shadow-sm ${doc.link ? 'text-white' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`} style={doc.link ? { backgroundColor: config.color } : {}}><Download size={18}/></a>
               </div>
             </div>
             {editingDocLink === doc.id && (
-              <div className="flex gap-2 w-full pt-3 border-t mt-1">
-                <input autoFocus value={doc.link} onChange={e => { const n = [...data]; n[idx].link = e.target.value; setData(n); }} placeholder="https:// link do PDF/Drive..." className="flex-1 p-2 border rounded outline-none text-sm" />
-                <button onClick={() => setEditingDocLink(null)} className="bg-blue-600 text-white px-3 rounded text-sm font-bold">OK</button>
+              <div className="flex gap-2 w-full pt-4 border-t border-gray-100">
+                <input autoFocus value={doc.link} onChange={e => { const n = [...data]; n[idx].link = e.target.value; setData(n); }} placeholder="https:// link do PDF (Drive)..." className="flex-1 p-3 border border-gray-200 rounded-xl outline-none text-sm bg-gray-50 font-medium" />
+                <button onClick={() => setEditingDocLink(null)} className="text-white px-5 rounded-xl font-bold shadow-md transition-transform hover:scale-105" style={{ backgroundColor: config.secondaryColor }}>Salvar</button>
               </div>
             )}
           </div>
@@ -776,30 +849,13 @@ function SettingsView({ config, setConfig, users, setUsers, showToast }) {
   const [newUser, setNewUser] = useState({ login: '', pass: '', role: 'empresa', name: '' });
   const [testingApi, setTestingApi] = useState(false);
 
-  const handleAddUser = () => {
-    if(!newUser.login || !newUser.pass) return showToast("Preencha login e senha!");
-    setUsers([...users, { ...newUser, id: Date.now() }]);
-    setNewUser({ login: '', pass: '', role: 'empresa', name: '' });
-    showToast("Usuário adicionado!");
-  };
-
-  const handleDeleteUser = (id) => {
-    if(users.length <= 1) return showToast("Não é possível apagar o último usuário.");
-    setUsers(users.filter(u => u.id !== id));
-    showToast("Usuário removido.");
-  };
-
   const handleTestApi = async () => {
     if (!config.geminiKey) return showToast("Insira a chave da API antes de testar.");
     setTestingApi(true);
     try {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${config.geminiKey}`);
-      const data = await res.json();
-      if (res.ok && data.models) {
-        showToast(`✅ Chave validada! ${data.models.length} modelos disponíveis.`);
-      } else {
-        throw new Error(data.error?.message || "Erro desconhecido ao validar a chave.");
-      }
+      if (res.ok) showToast(`✅ Chave API validada e pronta para uso!`);
+      else throw new Error("Chave inválida.");
     } catch (err) {
       showToast(`❌ Erro na chave: ${err.message}`);
     } finally {
@@ -808,68 +864,97 @@ function SettingsView({ config, setConfig, users, setUsers, showToast }) {
   };
 
   return (
-    <div className="max-w-3xl mx-auto space-y-6">
-      <h1 className="text-2xl font-bold text-gray-800">Configurações do Sistema</h1>
+    <div className="max-w-4xl mx-auto space-y-8 pb-10">
+      <div>
+        <h1 className="text-3xl font-black">Painel de Controle e Customização</h1>
+        <p className="text-sm font-medium opacity-70 mt-1">Ajuste cores globais, integrações de IA e gerencie os usuários do sistema.</p>
+      </div>
       
-      <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 space-y-4">
-        <h2 className="text-lg font-bold border-b pb-2">Identidade Visual e Integrações</h2>
-        <div className="flex flex-col md:flex-row gap-4">
-          <div className="flex-1">
-            <label className="text-sm font-semibold text-gray-600 block mb-1">Nome da Empresa</label>
-            <input value={config.companyName} onChange={e => setConfig({...config, companyName: e.target.value})} className="w-full p-3 border rounded-xl outline-none" placeholder="Azione Marketing" />
+      {/* 1. Customização Visual Avançada */}
+      <div className="bg-white/80 backdrop-blur-md p-8 rounded-3xl shadow-sm border border-gray-200/50 space-y-6">
+        <h2 className="text-xl font-black border-b border-gray-100 pb-3 flex items-center gap-2">🎨 Identidade Visual (White-label)</h2>
+        
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <div className="space-y-4">
+            <div>
+              <label className="text-xs font-bold opacity-60 uppercase tracking-wider block mb-1">Nome Fantasia do Painel</label>
+              <input value={config.companyName} onChange={e => setConfig({...config, companyName: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none font-bold bg-gray-50 focus:bg-white focus:border-blue-400" />
+            </div>
+            <div>
+              <label className="text-xs font-bold opacity-60 uppercase tracking-wider block mb-1">URL da Logotipo</label>
+              <input value={config.logo} onChange={e => setConfig({...config, logo: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none text-sm bg-gray-50 focus:bg-white focus:border-blue-400" placeholder="Ex: https://..." />
+            </div>
           </div>
-          <div className="flex-1">
-            <label className="text-sm font-semibold text-gray-600 block mb-1">Logo (URL da Imagem)</label>
-            <input value={config.logo} onChange={e => setConfig({...config, logo: e.target.value})} className="w-full p-3 border rounded-xl outline-none" placeholder="https://link-da-imagem.png" />
+          
+          <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100 grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs font-bold opacity-60 uppercase tracking-wider block mb-1 text-center">Cor Primária</label>
+              <input type="color" value={config.color} onChange={e => setConfig({...config, color: e.target.value})} className="w-full h-12 rounded-xl cursor-pointer border-0 bg-transparent" />
+            </div>
+            <div>
+              <label className="text-xs font-bold opacity-60 uppercase tracking-wider block mb-1 text-center">Cor Secundária</label>
+              <input type="color" value={config.secondaryColor} onChange={e => setConfig({...config, secondaryColor: e.target.value})} className="w-full h-12 rounded-xl cursor-pointer border-0 bg-transparent" />
+            </div>
+            <div>
+              <label className="text-xs font-bold opacity-60 uppercase tracking-wider block mb-1 text-center">Fundo Global</label>
+              <input type="color" value={config.bgColor} onChange={e => setConfig({...config, bgColor: e.target.value})} className="w-full h-12 rounded-xl cursor-pointer border-0 bg-transparent" />
+            </div>
+            <div>
+              <label className="text-xs font-bold opacity-60 uppercase tracking-wider block mb-1 text-center">Texto / Contraste</label>
+              <input type="color" value={config.textColor} onChange={e => setConfig({...config, textColor: e.target.value})} className="w-full h-12 rounded-xl cursor-pointer border-0 bg-transparent" />
+            </div>
           </div>
         </div>
-        <div className="flex gap-4 items-center">
-          <div className="flex-1">
-            <label className="text-sm font-semibold text-gray-600 block mb-1">Cor Primária (HEX)</label>
-            <input value={config.color} onChange={e => setConfig({...config, color: e.target.value})} className="w-full p-3 border rounded-xl outline-none" placeholder="#3B82F6" />
-          </div>
-          <div className="w-12 h-12 rounded-lg border mt-5" style={{ backgroundColor: config.color }}></div>
-        </div>
-        <div>
-          <label className="text-sm font-semibold text-gray-600 block mb-1">Chave API (Gemini IA)</label>
-          <div className="flex gap-2">
-            <input type="password" value={config.geminiKey} onChange={e => setConfig({...config, geminiKey: e.target.value})} className="flex-1 p-3 border rounded-xl outline-none" placeholder="AIzaSy..." />
-            <button onClick={handleTestApi} disabled={testingApi} className="bg-gray-100 text-gray-700 px-4 rounded-xl font-bold border hover:bg-gray-200 disabled:opacity-50 transition-colors">
-              {testingApi ? 'Testando...' : 'Testar Chave'}
-            </button>
-          </div>
-        </div>
-        <button onClick={() => showToast("Ajustes visuais atualizados!")} className="bg-gray-800 text-white px-6 py-2 rounded-xl font-bold">Atualizar Tela</button>
       </div>
 
-      <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 space-y-4">
-        <h2 className="text-lg font-bold border-b pb-2">Controle de Usuários</h2>
+      {/* 2. Integrações Poderosas */}
+      <div className="bg-white/80 backdrop-blur-md p-8 rounded-3xl shadow-sm border border-gray-200/50 space-y-6">
+        <h2 className="text-xl font-black border-b border-gray-100 pb-3 flex items-center gap-2">🔗 Motores Externos (Looker & IA)</h2>
+        <div className="space-y-5">
+          <div>
+            <label className="text-xs font-bold opacity-60 uppercase tracking-wider block mb-1">Dashboard Embed URL (Looker Studio)</label>
+            <input value={config.lookerStudioUrl} onChange={e => setConfig({...config, lookerStudioUrl: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none text-sm bg-gray-50 focus:bg-white focus:border-blue-400 font-medium" placeholder="Cole o link do seu relatório Looker Studio aqui..." />
+            <p className="text-[10px] font-bold text-blue-600 mt-1 uppercase tracking-wide">Cole o link padrão e o sistema converterá em Embed Automaticamente.</p>
+          </div>
+          <div>
+            <label className="text-xs font-bold opacity-60 uppercase tracking-wider block mb-1">Google AI Studio Key (Gemini API)</label>
+            <div className="flex gap-2">
+              <input type="password" value={config.geminiKey} onChange={e => setConfig({...config, geminiKey: e.target.value})} className="flex-1 p-3 border border-gray-200 rounded-xl outline-none bg-gray-50 focus:bg-white focus:border-blue-400 font-mono" placeholder="AIzaSy..." />
+              <button onClick={handleTestApi} disabled={testingApi} className="bg-gray-800 text-white px-5 rounded-xl font-bold shadow-md hover:bg-black transition-colors disabled:opacity-50">
+                {testingApi ? 'Testando...' : 'Verificar API'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* 3. Usuários */}
+      <div className="bg-white/80 backdrop-blur-md p-8 rounded-3xl shadow-sm border border-gray-200/50 space-y-6">
+        <h2 className="text-xl font-black border-b border-gray-100 pb-3">👥 Gerenciamento de Acessos</h2>
         <div className="space-y-3">
           {users.map((u, i) => (
-            <div key={u.id} className="flex gap-3 items-center border p-3 rounded-xl bg-gray-50">
-              <span className="bg-gray-200 text-xs font-bold px-2 py-1 rounded uppercase w-24 text-center">{u.role}</span>
-              <input value={u.login} onChange={e => { const n = [...users]; n[i].login = e.target.value; setUsers(n); }} className="flex-1 outline-none font-semibold text-gray-700 bg-transparent" placeholder="Login" />
-              <input value={u.pass} onChange={e => { const n = [...users]; n[i].pass = e.target.value; setUsers(n); }} className="flex-1 outline-none text-gray-500 bg-transparent" placeholder="Senha" type="text" />
-              <button onClick={() => handleDeleteUser(u.id)} className="p-2 text-red-400 hover:text-red-600"><Trash2 size={18}/></button>
+            <div key={u.id} className="flex gap-3 items-center border border-gray-100 p-3 rounded-2xl bg-gray-50 shadow-inner">
+              <span className="bg-white shadow-sm border border-gray-200 text-xs font-black px-3 py-1.5 rounded-lg uppercase tracking-wider w-28 text-center text-gray-700">{u.role}</span>
+              <input value={u.login} onChange={e => { const n = [...users]; n[i].login = e.target.value; setUsers(n); }} className="flex-1 outline-none font-bold text-gray-800 bg-transparent" placeholder="Login" />
+              <input value={u.pass} onChange={e => { const n = [...users]; n[i].pass = e.target.value; setUsers(n); }} className="flex-1 outline-none text-gray-500 font-medium bg-transparent" placeholder="Senha" type="text" />
+              <button onClick={() => {if(users.length>1) setUsers(users.filter(usr=>usr.id!==u.id)); else showToast("Impossível apagar o último.")}} className="p-2.5 bg-red-100 text-red-600 rounded-xl hover:bg-red-200 transition-colors"><Trash2 size={18}/></button>
             </div>
           ))}
         </div>
 
-        <div className="mt-6 pt-5 border-t">
-          <h3 className="text-sm font-bold text-gray-700 mb-3">Adicionar Novo Usuário</h3>
+        <div className="mt-8 pt-6 border-t border-gray-200/50">
+          <h3 className="text-sm font-black text-gray-800 mb-3 uppercase tracking-wider">Novo Colaborador / Cliente</h3>
           <div className="flex flex-col md:flex-row gap-3 items-center">
-            <select value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value})} className="p-3 border rounded-xl outline-none text-sm w-full md:w-32 bg-white">
+            <select value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value})} className="p-3.5 border border-gray-200 rounded-xl outline-none font-bold text-sm w-full md:w-40 bg-white shadow-sm focus:border-blue-400">
               <option value="empresa">Empresa</option>
               <option value="gestor">Gestor Geral</option>
               <option value="midias">Mídias</option>
             </select>
-            <input value={newUser.login} onChange={e => setNewUser({...newUser, login: e.target.value})} className="flex-1 p-3 border rounded-xl outline-none text-sm w-full" placeholder="Novo Login" />
-            <input value={newUser.pass} onChange={e => setNewUser({...newUser, pass: e.target.value})} className="flex-1 p-3 border rounded-xl outline-none text-sm w-full" placeholder="Nova Senha" type="text" />
-            <button onClick={handleAddUser} className="w-full md:w-auto px-6 py-3 rounded-xl font-bold text-white flex items-center justify-center gap-2 shadow-sm" style={{ backgroundColor: config.color }}><Plus size={18}/> Add</button>
+            <input value={newUser.login} onChange={e => setNewUser({...newUser, login: e.target.value})} className="flex-1 p-3.5 border border-gray-200 rounded-xl outline-none font-bold text-sm w-full bg-white shadow-sm focus:border-blue-400" placeholder="Nome de Usuário" />
+            <input value={newUser.pass} onChange={e => setNewUser({...newUser, pass: e.target.value})} className="flex-1 p-3.5 border border-gray-200 rounded-xl outline-none font-medium text-sm w-full bg-white shadow-sm focus:border-blue-400" placeholder="Senha Forte" type="text" />
+            <button onClick={() => { if(newUser.login) { setUsers([...users, {...newUser, id:Date.now()}]); setNewUser({login:'', pass:'', role:'empresa', name:''}); showToast("Usuário adicionado!"); }}} className="w-full md:w-auto px-8 py-3.5 rounded-xl font-black text-white shadow-lg transition-transform hover:scale-105" style={{ backgroundColor: config.color }}>Adicionar</button>
           </div>
         </div>
-
-        <p className="text-xs text-green-600 font-medium mt-2">* Tudo o que for alterado no app é salvo imediatamente na VPS.</p>
       </div>
     </div>
   );
