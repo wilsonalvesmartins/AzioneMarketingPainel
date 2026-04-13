@@ -7,16 +7,24 @@ import {
   BarChart3, BrainCircuit, FileSearch
 } from 'lucide-react';
 
+// --- FUNÇÃO AUXILIAR DE NOMENCLATURA DE CARGOS ---
+const getDisplayRole = (role) => {
+  if (role === 'empresa' || role === 'cliente') return 'Cliente';
+  if (role === 'gestor' || role === 'administrador') return 'Administrador';
+  if (role === 'midias') return 'Mídias';
+  return role;
+};
+
 // --- DADOS PADRÃO (Usados apenas se o banco da VPS estiver vazio) ---
 const defaultUsers = [
-  { id: 1, login: 'empresa', pass: 'empresa123', role: 'empresa', name: 'Cliente Azione' },
-  { id: 2, login: 'gestor', pass: 'gestor123', role: 'gestor', name: 'Gestor Geral' },
+  { id: 1, login: 'cliente', pass: 'cliente123', role: 'cliente', name: 'Cliente Azione' },
+  { id: 2, login: 'gestor', pass: 'gestor123', role: 'administrador', name: 'Administrador Geral' },
   { id: 3, login: 'midias', pass: 'midias123', role: 'midias', name: 'Gestor de Mídias' }
 ];
 
 const defaultKanban = [
   { id: '1', title: 'Campanha de Inverno', desc: 'Vídeo promocional para o instagram.', link: 'https://drive.google.com/file/d/123/preview', col: 'Produção', date: '', isCarousel: false, carousel: [], caption: '', comments: [] },
-  { id: '2', title: 'Dicas de Marketing', desc: 'Carrossel com 3 dicas.', link: '', col: 'Programados', date: '2026-04-15', isCarousel: true, carousel: ['https://link1.com', 'https://link2.com'], caption: 'Confira essas dicas incríveis! #marketing', comments: [{ author: 'gestor', text: 'Aprovado para postagem!', date: new Date().toISOString() }] }
+  { id: '2', title: 'Dicas de Marketing', desc: 'Carrossel com 3 dicas.', link: '', col: 'Programados', date: '2026-04-15', isCarousel: true, carousel: ['https://link1.com', 'https://link2.com'], caption: 'Confira essas dicas incríveis! #marketing', comments: [{ author: 'administrador', text: 'Aprovado para postagem!', date: new Date().toISOString() }] }
 ];
 
 const defaultFinances = [
@@ -179,7 +187,13 @@ export default function App() {
             <input name="pass" type="password" placeholder="Senha" required className="w-full p-4 border border-gray-200 rounded-xl outline-none focus:ring-2 bg-gray-50 text-gray-800" />
             <button type="submit" className="w-full text-white p-4 rounded-xl font-bold text-lg transition-transform hover:scale-[1.02] shadow-lg" style={{ backgroundColor: config.color }}>Acessar Painel</button>
           </form>
-          <div className="mt-8 text-xs font-medium text-gray-400">
+          <div className="mt-6 text-sm text-gray-500 flex flex-col gap-1">
+            <p className="font-bold">Dicas de acesso:</p>
+            <p>cliente / cliente123</p>
+            <p>gestor / gestor123</p>
+            <p>midias / midias123</p>
+          </div>
+          <div className="mt-6 text-xs font-medium text-gray-400">
             Azione Marketing e Propaganda © 2026
           </div>
         </div>
@@ -189,12 +203,12 @@ export default function App() {
   }
 
   const menuItems = [
-    { id: 'kanban', label: 'Esteira', icon: <KanbanSquare size={20} />, roles: ['empresa', 'gestor', 'midias'] },
-    { id: 'calendar', label: 'Cronograma', icon: <CalendarDays size={20} />, roles: ['empresa', 'gestor', 'midias'] },
-    { id: 'traffic', label: 'Tráfego & BI', icon: <TrendingUp size={20} />, roles: ['empresa', 'gestor'] },
-    { id: 'finance', label: 'Financeiro', icon: <DollarSign size={20} />, roles: ['empresa', 'gestor'] },
-    { id: 'docs', label: 'Documentos', icon: <FileText size={20} />, roles: ['empresa', 'gestor'] },
-    { id: 'settings', label: 'Configurações', icon: <Settings size={20} />, roles: ['gestor'] },
+    { id: 'kanban', label: 'Esteira', icon: <KanbanSquare size={20} />, roles: ['empresa', 'cliente', 'gestor', 'administrador', 'midias'] },
+    { id: 'calendar', label: 'Cronograma', icon: <CalendarDays size={20} />, roles: ['empresa', 'cliente', 'gestor', 'administrador', 'midias'] },
+    { id: 'traffic', label: 'Tráfego & BI', icon: <TrendingUp size={20} />, roles: ['empresa', 'cliente', 'gestor', 'administrador'] },
+    { id: 'finance', label: 'Financeiro', icon: <DollarSign size={20} />, roles: ['empresa', 'cliente', 'gestor', 'administrador'] },
+    { id: 'docs', label: 'Documentos', icon: <FileText size={20} />, roles: ['empresa', 'cliente', 'gestor', 'administrador'] },
+    { id: 'settings', label: 'Configurações', icon: <Settings size={20} />, roles: ['gestor', 'administrador'] },
   ].filter(item => item.roles.includes(user.role));
 
   return (
@@ -206,7 +220,7 @@ export default function App() {
             {config.logo ? <img src={config.logo} alt="Logo" className="h-10 flex-shrink-0 object-contain" /> : <div className="w-10 h-10 rounded-xl flex-shrink-0 flex items-center justify-center text-white font-black text-xl shadow-md" style={{ backgroundColor: config.color }}>AZ</div>}
             <div className="hidden md:block truncate">
               <h2 className="font-bold text-gray-800 leading-tight truncate text-lg">{config.companyName}</h2>
-              <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mt-1">{user.role}</p>
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mt-1">{getDisplayRole(user.role)}</p>
             </div>
           </div>
           <nav className="flex md:flex-col gap-2 overflow-x-auto md:overflow-visible pb-2 md:pb-0">
@@ -236,7 +250,7 @@ export default function App() {
         </div>
         
         <footer className="mt-12 pt-6 border-t border-gray-200/50 text-center text-xs font-semibold" style={{ color: `${config.textColor}80` }}>
-          Este é um app oficial {config.companyName}, todos os direitos reservados!
+          Este é um app oficial Azione Marketing, todos os direitos reservados!
         </footer>
       </main>
       
@@ -281,7 +295,7 @@ function KanbanView({ data, setData, user, config, showToast, openCardId, setOpe
           <h1 className="text-3xl font-black">Esteira de Produção</h1>
           <p className="text-sm font-medium opacity-70 mt-1">Gerencie cards, aprove posts e acompanhe o funil de mídia.</p>
         </div>
-        {['gestor', 'midias'].includes(user.role) && (
+        {['gestor', 'administrador', 'midias'].includes(user.role) && (
           <button onClick={createCard} className="flex items-center gap-2 text-white px-5 py-2.5 rounded-xl shadow-lg hover:opacity-90 font-bold transition-transform hover:scale-105" style={{ backgroundColor: config.color }}>
             <Plus size={18} /> Novo Card
           </button>
@@ -326,7 +340,7 @@ function CardModal({ card, user, config, onClose, onSave, showToast }) {
   const [aiLoading, setAiLoading] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
 
-  const canEditCore = ['gestor', 'midias'].includes(user.role);
+  const canEditCore = ['gestor', 'administrador', 'midias'].includes(user.role);
   
   const formatDriveLink = (url) => {
     if (!url) return '';
@@ -444,9 +458,9 @@ function CardModal({ card, user, config, onClose, onSave, showToast }) {
               <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4 h-48 overflow-y-auto space-y-3 mb-3 custom-scrollbar shadow-inner">
                 {draft.comments.length === 0 && <p className="text-xs font-medium text-gray-400 text-center mt-6">Nenhuma observação ainda.</p>}
                 {draft.comments.map((c, i) => (
-                  <div key={i} className={`p-3 rounded-xl border text-sm ${c.author === 'empresa' ? 'bg-blue-50 border-blue-100' : 'bg-white border-gray-100 shadow-sm'}`}>
+                  <div key={i} className={`p-3 rounded-xl border text-sm ${['empresa', 'cliente'].includes(c.author) ? 'bg-blue-50 border-blue-100' : 'bg-white border-gray-100 shadow-sm'}`}>
                     <div className="flex justify-between items-center text-xs mb-1.5">
-                      <span className="font-bold text-gray-800 uppercase tracking-wider">{c.author}</span>
+                      <span className="font-bold text-gray-800 uppercase tracking-wider">{getDisplayRole(c.author)}</span>
                       <span className="text-gray-400 font-medium">{new Date(c.date).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short'})}</span>
                     </div>
                     <p className="text-gray-700 leading-relaxed">{c.text}</p>
@@ -520,7 +534,7 @@ function CalendarView({ data, config, onOpenCard }) {
 }
 
 function TrafficView({ data, setData, user, config, showToast }) {
-  const isClient = user.role === 'empresa';
+  const isClient = ['empresa', 'cliente'].includes(user.role);
   const [activeTab, setActiveTab] = useState('looker'); // 'looker', 'reports'
   const [expandedId, setExpandedId] = useState(null);
   const [aiLoadingId, setAiLoadingId] = useState(null);
@@ -720,6 +734,7 @@ function MetricBox({ label, val, onChange, edit, color }) {
 }
 
 function FinanceView({ data, setData, user, config, showToast }) {
+  const isAdmin = ['gestor', 'administrador'].includes(user.role);
   const [editingFin, setEditingFin] = useState(null);
 
   const copyPix = (pix) => {
@@ -741,7 +756,7 @@ function FinanceView({ data, setData, user, config, showToast }) {
           <h1 className="text-3xl font-black">Departamento Financeiro</h1>
           <p className="text-sm font-medium opacity-70 mt-1">Controle de faturas, boletos, PIX e Notas Fiscais.</p>
         </div>
-        {user.role === 'gestor' && (
+        {isAdmin && (
           <button onClick={() => setEditingFin({ id: 'new', desc: 'Nova Cobrança Mensalidade', due: '', pix: '', boleto: '', nf: '', status: 'Pendente' })} className="flex items-center gap-2 text-white px-5 py-2.5 rounded-xl shadow-lg font-bold transition-transform hover:scale-105" style={{ backgroundColor: config.color }}>
             <Plus size={18} /> Nova Fatura
           </button>
@@ -772,7 +787,7 @@ function FinanceView({ data, setData, user, config, showToast }) {
                   <button onClick={() => copyPix(fin.pix)} className="p-2.5 bg-gray-100 text-gray-700 rounded-xl hover:bg-gray-200 shadow-sm transition-colors" title="Copiar PIX"><Copy size={18}/></button>
                   <a href={fin.boleto || '#'} target="_blank" rel="noreferrer" onClick={e => !fin.boleto && e.preventDefault()} className={`p-2.5 rounded-xl shadow-sm transition-colors ${fin.boleto ? 'bg-blue-50 text-blue-600 hover:bg-blue-100 border border-blue-100' : 'bg-gray-50 text-gray-300 cursor-not-allowed border border-gray-100'}`} title="Baixar Boleto"><FileText size={18}/></a>
                   <a href={fin.nf || '#'} target="_blank" rel="noreferrer" onClick={e => !fin.nf && e.preventDefault()} className={`p-2.5 rounded-xl shadow-sm transition-colors ${fin.nf ? 'bg-green-50 text-green-600 hover:bg-green-100 border border-green-100' : 'bg-gray-50 text-gray-300 cursor-not-allowed border border-gray-100'}`} title="Baixar NF"><Download size={18}/></a>
-                  {user.role === 'gestor' && (
+                  {isAdmin && (
                     <>
                       <div className="w-px bg-gray-200 mx-1"></div>
                       <button onClick={() => setEditingFin(fin)} className="p-2.5 bg-yellow-50 text-yellow-600 rounded-xl hover:bg-yellow-100 border border-yellow-100 shadow-sm" title="Editar"><Edit3 size={18}/></button>
@@ -833,6 +848,7 @@ function FinanceView({ data, setData, user, config, showToast }) {
 }
 
 function DocsView({ data, setData, user, config }) {
+  const isAdmin = ['gestor', 'administrador'].includes(user.role);
   const [editingDocLink, setEditingDocLink] = useState(null);
 
   return (
@@ -842,7 +858,7 @@ function DocsView({ data, setData, user, config }) {
           <h1 className="text-3xl font-black">Documentos Oficiais</h1>
           <p className="text-sm font-medium opacity-70 mt-1">Acesso a contratos, aditivos e propostas.</p>
         </div>
-        {user.role === 'gestor' && (
+        {isAdmin && (
           <button onClick={() => setData([...data, { id: Date.now(), title: 'Novo Documento Legal', date: '', link: '' }])} className="flex items-center gap-2 text-white px-5 py-2.5 rounded-xl shadow-lg font-bold transition-transform hover:scale-105" style={{ backgroundColor: config.color }}>
             <Plus size={18} /> Upload de Arquivo
           </button>
@@ -856,12 +872,12 @@ function DocsView({ data, setData, user, config }) {
               <div className="flex items-center gap-5 w-full pr-2">
                 <div className="w-14 h-14 rounded-2xl flex-shrink-0 flex items-center justify-center shadow-inner" style={{ backgroundColor: `${config.secondaryColor}20`, color: config.secondaryColor }}><FileText size={28}/></div>
                 <div className="w-full">
-                  {user.role === 'gestor' ? <input value={doc.title} onChange={e => { const n = [...data]; n[idx].title = e.target.value; setData(n); }} className="font-black text-lg border-b-2 border-transparent focus:border-gray-300 bg-transparent outline-none text-gray-800 w-full transition-colors" placeholder="Título Legal..." /> : <h3 className="font-black text-lg text-gray-800">{doc.title}</h3>}
-                  {user.role === 'gestor' ? <input type="date" value={doc.date} onChange={e => { const n = [...data]; n[idx].date = e.target.value; setData(n); }} className="text-xs font-bold opacity-60 bg-transparent outline-none mt-1 w-full" /> : <p className="text-xs font-bold opacity-60 mt-1">Data Assinatura: {new Date(doc.date).toLocaleDateString('pt-BR')}</p>}
+                  {isAdmin ? <input value={doc.title} onChange={e => { const n = [...data]; n[idx].title = e.target.value; setData(n); }} className="font-black text-lg border-b-2 border-transparent focus:border-gray-300 bg-transparent outline-none text-gray-800 w-full transition-colors" placeholder="Título Legal..." /> : <h3 className="font-black text-lg text-gray-800">{doc.title}</h3>}
+                  {isAdmin ? <input type="date" value={doc.date} onChange={e => { const n = [...data]; n[idx].date = e.target.value; setData(n); }} className="text-xs font-bold opacity-60 bg-transparent outline-none mt-1 w-full" /> : <p className="text-xs font-bold opacity-60 mt-1">Data Assinatura: {new Date(doc.date).toLocaleDateString('pt-BR')}</p>}
                 </div>
               </div>
               <div className="flex gap-2">
-                {user.role === 'gestor' && (
+                {isAdmin && (
                   <>
                     <button onClick={() => setEditingDocLink(editingDocLink === doc.id ? null : doc.id)} className="p-3 bg-gray-100 rounded-xl hover:bg-gray-200 text-gray-600 transition-colors"><Edit3 size={18}/></button>
                     <button onClick={() => setData(data.filter(d => d.id !== doc.id))} className="p-3 bg-red-50 rounded-xl hover:bg-red-100 text-red-600 transition-colors"><Trash2 size={18}/></button>
@@ -884,7 +900,7 @@ function DocsView({ data, setData, user, config }) {
 }
 
 function SettingsView({ config, setConfig, users, setUsers, showToast }) {
-  const [newUser, setNewUser] = useState({ login: '', pass: '', role: 'empresa', name: '' });
+  const [newUser, setNewUser] = useState({ login: '', pass: '', role: 'cliente', name: '' });
   const [testingApi, setTestingApi] = useState(false);
 
   const handleTestApi = async () => {
@@ -971,7 +987,7 @@ function SettingsView({ config, setConfig, users, setUsers, showToast }) {
         <div className="space-y-3">
           {users.map((u, i) => (
             <div key={u.id} className="flex gap-3 items-center border border-gray-100 p-3 rounded-2xl bg-gray-50 shadow-inner">
-              <span className="bg-white shadow-sm border border-gray-200 text-xs font-black px-3 py-1.5 rounded-lg uppercase tracking-wider w-28 text-center text-gray-700">{u.role}</span>
+              <span className="bg-white shadow-sm border border-gray-200 text-xs font-black px-3 py-1.5 rounded-lg uppercase tracking-wider w-32 text-center text-gray-700">{getDisplayRole(u.role)}</span>
               <input value={u.login} onChange={e => { const n = [...users]; n[i].login = e.target.value; setUsers(n); }} className="flex-1 outline-none font-bold text-gray-800 bg-transparent" placeholder="Login" />
               <input value={u.pass} onChange={e => { const n = [...users]; n[i].pass = e.target.value; setUsers(n); }} className="flex-1 outline-none text-gray-500 font-medium bg-transparent" placeholder="Senha" type="text" />
               <button onClick={() => {if(users.length>1) setUsers(users.filter(usr=>usr.id!==u.id)); else showToast("Impossível apagar o último.")}} className="p-2.5 bg-red-100 text-red-600 rounded-xl hover:bg-red-200 transition-colors"><Trash2 size={18}/></button>
@@ -983,13 +999,13 @@ function SettingsView({ config, setConfig, users, setUsers, showToast }) {
           <h3 className="text-sm font-black text-gray-800 mb-3 uppercase tracking-wider">Novo Colaborador / Cliente</h3>
           <div className="flex flex-col md:flex-row gap-3 items-center">
             <select value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value})} className="p-3.5 border border-gray-200 rounded-xl outline-none font-bold text-sm w-full md:w-40 bg-white shadow-sm focus:border-blue-400">
-              <option value="empresa">Empresa</option>
-              <option value="gestor">Gestor Geral</option>
+              <option value="cliente">Cliente</option>
+              <option value="administrador">Administrador</option>
               <option value="midias">Mídias</option>
             </select>
             <input value={newUser.login} onChange={e => setNewUser({...newUser, login: e.target.value})} className="flex-1 p-3.5 border border-gray-200 rounded-xl outline-none font-bold text-sm w-full bg-white shadow-sm focus:border-blue-400" placeholder="Nome de Usuário" />
             <input value={newUser.pass} onChange={e => setNewUser({...newUser, pass: e.target.value})} className="flex-1 p-3.5 border border-gray-200 rounded-xl outline-none font-medium text-sm w-full bg-white shadow-sm focus:border-blue-400" placeholder="Senha Forte" type="text" />
-            <button onClick={() => { if(newUser.login) { setUsers([...users, {...newUser, id:Date.now()}]); setNewUser({login:'', pass:'', role:'empresa', name:''}); showToast("Usuário adicionado!"); }}} className="w-full md:w-auto px-8 py-3.5 rounded-xl font-black text-white shadow-lg transition-transform hover:scale-105" style={{ backgroundColor: config.color }}>Adicionar</button>
+            <button onClick={() => { if(newUser.login) { setUsers([...users, {...newUser, id:Date.now()}]); setNewUser({login:'', pass:'', role:'cliente', name:''}); showToast("Usuário adicionado!"); }}} className="w-full md:w-auto px-8 py-3.5 rounded-xl font-black text-white shadow-lg transition-transform hover:scale-105" style={{ backgroundColor: config.color }}>Adicionar</button>
           </div>
         </div>
       </div>
