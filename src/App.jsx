@@ -7,38 +7,47 @@ import {
   BarChart3, BrainCircuit, FileSearch
 } from 'lucide-react';
 
+// --- FUNÇÕES DE SEGURANÇA MÁXIMA PARA EVITAR TELA BRANCA (CRASH) ---
+const safeArray = (arr) => Array.isArray(arr) ? arr : [];
+const safeObject = (obj) => (typeof obj === 'object' && obj !== null && !Array.isArray(obj)) ? obj : {};
+
 // --- FUNÇÃO AUXILIAR DE NOMENCLATURA DE CARGOS ---
 const getDisplayRole = (role) => {
-  if (role === 'empresa' || role === 'cliente') return 'Cliente';
-  if (role === 'gestor' || role === 'administrador') return 'Administrador';
-  if (role === 'midias') return 'Mídias';
+  if (role === 'empresa') return 'Empresa';
+  if (role === 'master') return 'Master';
+  if (role === 'social media') return 'Social Media';
+  if (role === 'gestor de tráfego') return 'Gestor de Tráfego';
   return role;
 };
 
-// --- DADOS PADRÃO (Usados apenas se o banco da VPS estiver vazio) ---
+// --- DADOS PADRÃO ---
 const defaultUsers = [
-  { id: 1, login: 'cliente', pass: 'cliente123', role: 'cliente', name: 'Cliente Azione' },
-  { id: 2, login: 'gestor', pass: 'gestor123', role: 'administrador', name: 'Administrador Geral' },
-  { id: 3, login: 'midias', pass: 'midias123', role: 'midias', name: 'Gestor de Mídias' }
+  { id: 1, login: 'empresa', pass: 'empresa123', role: 'empresa', name: 'Cliente Azione' },
+  { id: 2, login: 'master', pass: 'master123', role: 'master', name: 'Master' },
+  { id: 3, login: 'social', pass: 'social123', role: 'social media', name: 'Social Media' },
+  { id: 4, login: 'trafego', pass: 'trafego123', role: 'gestor de tráfego', name: 'Gestor de Tráfego' }
 ];
 
 const defaultKanban = [
-  { id: '1', title: 'Campanha de Inverno', desc: 'Vídeo promocional para o instagram.', link: 'https://drive.google.com/file/d/123/preview', col: 'Produção', date: '', isCarousel: false, carousel: [], caption: '', comments: [] },
-  { id: '2', title: 'Dicas de Marketing', desc: 'Carrossel com 3 dicas.', link: '', col: 'Programados', date: '2026-04-15', isCarousel: true, carousel: ['https://link1.com', 'https://link2.com'], caption: 'Confira essas dicas incríveis! #marketing', comments: [{ author: 'administrador', text: 'Aprovado para postagem!', date: new Date().toISOString() }] }
+  { id: '1', title: 'Campanha Inicial', desc: 'Vídeo promocional.', link: '', col: 'Ideias', date: '', isCarousel: false, carousel: [], caption: '', comments: [] }
 ];
 
 const defaultFinances = [
   { id: 1, desc: 'Fatura Abril', due: '2026-04-20', pix: '000.000.000-00', boleto: '', nf: '', status: 'Pendente' }
 ];
 
-const defaultReports = [{ id: 1, date: new Date().toISOString().split('T')[0], leads: 150, cost: '5.50', contracts: 10, attachment: '', aiAnalysis: '', custom: [{ label: 'Alcance Total', value: '45.000' }, { label: 'CTR Médio', value: '2.5%' }] }];
+const defaultReports = [{ 
+  id: 1, name: 'Fechamento de Performance', month: '2026-03', date: new Date().toISOString().split('T')[0], 
+  leads: 150, cost: '5.50', contracts: 10, attachment: '', aiAnalysis: '', observations: '', 
+  custom: [{ label: 'Alcance Total', value: '45.000' }] 
+}];
+
 const defaultDocs = [{ id: 1, title: 'Contrato Social', date: '2025-01-10', link: '' }];
 
-// Novas configurações de personalização
 const defaultConfig = { 
   companyName: 'Azione Marketing', 
   logo: '', 
-  color: '#EF4444', // Vermelho do PDF
+  color: '#EF4444', 
   secondaryColor: '#991B1B', 
   bgColor: '#F3F4F6', 
   textColor: '#1F2937',
@@ -46,37 +55,47 @@ const defaultConfig = {
   lookerStudioUrl: 'https://lookerstudio.google.com/reporting/10b2cbf5-4b1f-4f87-a96a-855d8067c523/page/4E6KF'
 };
 
-// --- HOOK DE PERSISTÊNCIA (Grava na VPS ou LocalStorage) ---
+// --- HOOK DE PERSISTÊNCIA (BLINDADO CONTRA CACHE CORROMPIDO) ---
 function usePersistentState(key, initialValue) {
-  const [state, setState] = useState(initialValue);
+  const [state, setState] = useState(() => {
+    try {
+      const local = localStorage.getItem(`azione_${key}`);
+      if (!local || local === 'null' || local === 'undefined') return initialValue;
+      const parsed = JSON.parse(local);
+      
+      if (Array.isArray(initialValue) && !Array.isArray(parsed)) return initialValue;
+      if (typeof initialValue === 'object' && !Array.isArray(initialValue) && (typeof parsed !== 'object' || Array.isArray(parsed) || parsed === null)) return initialValue;
+      
+      return parsed;
+    } catch (e) {
+      return initialValue;
+    }
+  });
+  
   const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
     fetch(`/api/data/${key}`)
       .then(res => { if (!res.ok) throw new Error(); return res.json(); })
       .then(data => {
-        if (data && data.data) {
-          // CORREÇÃO CRÍTICA: Garante que Arrays (Listas) não sejam convertidos em objetos
-          if (Array.isArray(data.data)) {
-            setState(data.data);
-          } else if (typeof data.data === 'object' && data.data !== null) {
-            setState({ ...initialValue, ...data.data }); 
-          } else {
-            setState(data.data);
-          }
+        if (data && data.data !== undefined && data.data !== null) {
+          const finalData = data.data;
+          setState(prev => {
+            let newState;
+            if (typeof initialValue === 'object' && !Array.isArray(initialValue)) {
+               newState = { ...initialValue, ...safeObject(prev), ...safeObject(finalData) };
+            } else if (Array.isArray(initialValue)) {
+               newState = safeArray(finalData);
+            } else {
+               newState = finalData;
+            }
+            localStorage.setItem(`azione_${key}`, JSON.stringify(newState));
+            return newState;
+          });
         }
         setIsLoaded(true);
       })
       .catch(err => {
-        const local = localStorage.getItem(`azione_${key}`);
-        if (local) { 
-          try { 
-            const parsed = JSON.parse(local);
-            if (Array.isArray(parsed)) setState(parsed);
-            else if (typeof parsed === 'object' && parsed !== null) setState({ ...initialValue, ...parsed });
-            else setState(parsed);
-          } catch(e){} 
-        }
         setIsLoaded(true);
       });
   }, [key]);
@@ -86,9 +105,8 @@ function usePersistentState(key, initialValue) {
     setState(valueToStore);
     fetch(`/api/data/${key}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: valueToStore })
-    }).catch(() => {
-      localStorage.setItem(`azione_${key}`, JSON.stringify(valueToStore));
-    });
+    }).catch(() => {});
+    localStorage.setItem(`azione_${key}`, JSON.stringify(valueToStore));
   };
 
   return [state, setPersistentState, isLoaded];
@@ -98,23 +116,35 @@ function usePersistentState(key, initialValue) {
 const callGeminiAPI = async (prompt, systemInstruction, config, showToast) => {
   if (!config.geminiKey) throw new Error("Chave API do Gemini não configurada.");
   
-  const modelsToTry = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro'];
+  let modelsToTry = ['gemini-2.5-flash', 'gemini-1.5-pro-latest', 'gemini-1.5-flash-latest', 'gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-pro'];
   let lastError = '';
+
+  try {
+    const resModels = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${config.geminiKey}`);
+    if (resModels.ok) {
+      const data = await resModels.json();
+      const availableModels = data.models
+        .filter(m => m.supportedGenerationMethods?.includes('generateContent') && m.name.includes('gemini'))
+        .map(m => m.name.replace('models/', ''));
+      
+      const validModels = modelsToTry.filter(m => availableModels.includes(m));
+      if (validModels.length > 0) modelsToTry = validModels;
+      else if (availableModels.length > 0) modelsToTry = [availableModels[0]];
+    }
+  } catch (err) {
+    console.warn("Falha ao listar modelos dinamicamente. Usando fallback.", err);
+  }
+
+  const finalPrompt = `[INSTRUÇÕES DA PERSONA E DO SISTEMA]:\n${systemInstruction}\n\n[TAREFA DO USUÁRIO]:\n${prompt}`;
 
   for (const model of modelsToTry) {
     try {
-      const payload = {
-        contents: [{ parts: [{ text: prompt }] }],
-        systemInstruction: { parts: [{ text: systemInstruction }] }
-      };
-      
+      const payload = { contents: [{ parts: [{ text: finalPrompt }] }] };
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${config.geminiKey}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
       });
-      
       const result = await res.json();
       if (!res.ok) throw new Error(result.error?.message || `Erro HTTP ${res.status}`);
-      
       const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
       if (text) return { text, model };
       throw new Error("Resposta vazia da IA.");
@@ -122,7 +152,7 @@ const callGeminiAPI = async (prompt, systemInstruction, config, showToast) => {
       lastError = e.message;
     }
   }
-  throw new Error(`Falha após tentar todos os modelos. Último erro: ${lastError}`);
+  throw new Error(`Falha após tentar os modelos disponíveis. Último erro: ${lastError}`);
 };
 
 // --- COMPONENTES DE UI ---
@@ -142,7 +172,6 @@ export default function App() {
   const [view, setView] = useState('kanban');
   const [toast, setToast] = useState('');
 
-  // Estados com Persistência
   const [users, setUsers, uLoad] = usePersistentState('users', defaultUsers);
   const [kanban, setKanban, kLoad] = usePersistentState('kanban', defaultKanban);
   const [reports, setReports, rLoad] = usePersistentState('reports', defaultReports);
@@ -158,43 +187,35 @@ export default function App() {
     return <div className="min-h-screen flex items-center justify-center bg-gray-50"><div className="animate-pulse text-xl font-bold text-gray-500">Conectando ao banco de dados...</div></div>;
   }
 
-  // Estilos Dinâmicos Globais Baseados nas Configurações
-  const appStyles = {
-    backgroundColor: config.bgColor || '#F3F4F6',
-    color: config.textColor || '#1F2937'
-  };
+  const safeConf = { ...defaultConfig, ...config };
+  const appStyles = { backgroundColor: safeConf.bgColor, color: safeConf.textColor };
 
   const handleLogin = (e) => {
     e.preventDefault();
-    const login = e.target.login.value;
-    const pass = e.target.pass.value;
-    const found = users.find(u => u.login === login && u.pass === pass);
-    if (found) {
-      setUser(found);
-      setView('kanban');
-    } else {
-      showToast('Credenciais inválidas!');
-    }
+    const login = e.target.login.value; const pass = e.target.pass.value;
+    const found = safeArray(users).find(u => u.login === login && u.pass === pass);
+    if (found) { 
+      setUser(found); 
+      // Redirecionamento inteligente baseado na role
+      if(found.role === 'gestor de tráfego') setView('traffic');
+      else setView('kanban'); 
+    } 
+    else { showToast('Credenciais inválidas!'); }
   };
 
   if (!user) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4 transition-colors duration-500" style={{ backgroundColor: config.bgColor }}>
+      <div className="min-h-screen flex items-center justify-center p-4 transition-colors duration-500" style={{ backgroundColor: safeConf.bgColor }}>
         <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md text-center border border-gray-100">
-          {config.logo ? <img src={config.logo} alt="Logo" className="h-20 mx-auto mb-6 object-contain" /> : <h1 className="text-3xl font-black mb-6" style={{ color: config.color }}>{config.companyName}</h1>}
+          {safeConf.logo ? <img src={safeConf.logo} alt="Logo" className="h-20 mx-auto mb-6 object-contain" /> : <h1 className="text-3xl font-black mb-6" style={{ color: safeConf.color }}>{safeConf.companyName}</h1>}
           <form onSubmit={handleLogin} className="space-y-4">
-            <input name="login" type="text" placeholder="Usuário" required className="w-full p-4 border border-gray-200 rounded-xl outline-none focus:ring-2 bg-gray-50 text-gray-800" style={{ focusRing: config.color }} />
+            <input name="login" type="text" placeholder="Usuário" required className="w-full p-4 border border-gray-200 rounded-xl outline-none focus:ring-2 bg-gray-50 text-gray-800" style={{ focusRing: safeConf.color }} />
             <input name="pass" type="password" placeholder="Senha" required className="w-full p-4 border border-gray-200 rounded-xl outline-none focus:ring-2 bg-gray-50 text-gray-800" />
-            <button type="submit" className="w-full text-white p-4 rounded-xl font-bold text-lg transition-transform hover:scale-[1.02] shadow-lg" style={{ backgroundColor: config.color }}>Acessar Painel</button>
+            <button type="submit" className="w-full text-white p-4 rounded-xl font-bold text-lg transition-transform hover:scale-[1.02] shadow-lg" style={{ backgroundColor: safeConf.color }}>Acessar Painel</button>
           </form>
           <div className="mt-6 text-sm text-gray-500 flex flex-col gap-1">
-            <p className="font-bold">Dicas de acesso:</p>
-            <p>cliente / cliente123</p>
-            <p>gestor / gestor123</p>
-            <p>midias / midias123</p>
-          </div>
-          <div className="mt-6 text-xs font-medium text-gray-400">
-            Azione Marketing e Propaganda © 2026
+            <p className="font-bold">Acesso Padrão:</p>
+            <p>master / master123</p>
           </div>
         </div>
         {toast && <Toast msg={toast} onClose={() => setToast('')} />}
@@ -202,30 +223,30 @@ export default function App() {
     );
   }
 
+  // --- CONTROLE DE ACESSO (PERMISSÕES) ---
   const menuItems = [
-    { id: 'kanban', label: 'Esteira', icon: <KanbanSquare size={20} />, roles: ['empresa', 'cliente', 'gestor', 'administrador', 'midias'] },
-    { id: 'calendar', label: 'Cronograma', icon: <CalendarDays size={20} />, roles: ['empresa', 'cliente', 'gestor', 'administrador', 'midias'] },
-    { id: 'traffic', label: 'Tráfego & BI', icon: <TrendingUp size={20} />, roles: ['empresa', 'cliente', 'gestor', 'administrador'] },
-    { id: 'finance', label: 'Financeiro', icon: <DollarSign size={20} />, roles: ['empresa', 'cliente', 'gestor', 'administrador'] },
-    { id: 'docs', label: 'Documentos', icon: <FileText size={20} />, roles: ['empresa', 'cliente', 'gestor', 'administrador'] },
-    { id: 'settings', label: 'Configurações', icon: <Settings size={20} />, roles: ['gestor', 'administrador'] },
+    { id: 'kanban', label: 'Esteira', icon: <KanbanSquare size={20} />, roles: ['empresa', 'master', 'social media', 'gestor de tráfego'] },
+    { id: 'calendar', label: 'Cronograma', icon: <CalendarDays size={20} />, roles: ['empresa', 'master', 'social media'] },
+    { id: 'traffic', label: 'Dados de Tráfego', icon: <TrendingUp size={20} />, roles: ['empresa', 'master', 'gestor de tráfego'] },
+    { id: 'finance', label: 'Financeiro', icon: <DollarSign size={20} />, roles: ['empresa', 'master'] },
+    { id: 'docs', label: 'Documentos', icon: <FileText size={20} />, roles: ['empresa', 'master'] },
+    { id: 'settings', label: 'Configurações', icon: <Settings size={20} />, roles: ['master'] },
   ].filter(item => item.roles.includes(user.role));
 
   return (
     <div className="min-h-screen flex flex-col md:flex-row transition-colors duration-500 font-sans" style={appStyles}>
-      {/* Sidebar */}
-      <aside className="bg-white border-r border-gray-200 md:w-64 flex-shrink-0 flex flex-col justify-between shadow-sm z-10" style={{ borderTop: `5px solid ${config.color}` }}>
+      <aside className="bg-white border-r border-gray-200 md:w-64 flex-shrink-0 flex flex-col justify-between shadow-sm z-10" style={{ borderTop: `5px solid ${safeConf.color}` }}>
         <div className="p-5 md:p-6">
           <div className="flex items-center gap-3 mb-8 overflow-hidden">
-            {config.logo ? <img src={config.logo} alt="Logo" className="h-10 flex-shrink-0 object-contain" /> : <div className="w-10 h-10 rounded-xl flex-shrink-0 flex items-center justify-center text-white font-black text-xl shadow-md" style={{ backgroundColor: config.color }}>AZ</div>}
+            {safeConf.logo ? <img src={safeConf.logo} alt="Logo" className="h-10 flex-shrink-0 object-contain" /> : <div className="w-10 h-10 rounded-xl flex-shrink-0 flex items-center justify-center text-white font-black text-xl shadow-md" style={{ backgroundColor: safeConf.color }}>AZ</div>}
             <div className="hidden md:block truncate">
-              <h2 className="font-bold text-gray-800 leading-tight truncate text-lg">{config.companyName}</h2>
+              <h2 className="font-bold text-gray-800 leading-tight truncate text-lg">{safeConf.companyName}</h2>
               <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mt-1">{getDisplayRole(user.role)}</p>
             </div>
           </div>
           <nav className="flex md:flex-col gap-2 overflow-x-auto md:overflow-visible pb-2 md:pb-0">
             {menuItems.map(item => (
-              <button key={item.id} onClick={() => setView(item.id)} className={`flex items-center gap-3 p-3 rounded-xl transition-all whitespace-nowrap font-semibold ${view === item.id ? 'text-white shadow-md' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'}`} style={view === item.id ? { backgroundColor: config.color } : {}}>
+              <button key={item.id} onClick={() => setView(item.id)} className={`flex items-center gap-3 p-3 rounded-xl transition-all whitespace-nowrap font-semibold ${view === item.id ? 'text-white shadow-md' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'}`} style={view === item.id ? { backgroundColor: safeConf.color } : {}}>
                 {item.icon} <span className="hidden md:block">{item.label}</span>
               </button>
             ))}
@@ -238,22 +259,20 @@ export default function App() {
         </div>
       </aside>
 
-      {/* Main Content Area */}
-      <main className="flex-1 p-4 md:p-8 overflow-y-auto w-full max-w-[100vw] flex flex-col relative" style={{ color: config.textColor }}>
+      <main className="flex-1 p-4 md:p-8 overflow-y-auto w-full max-w-[100vw] flex flex-col relative" style={{ color: safeConf.textColor }}>
         <div className="flex-1 max-w-7xl mx-auto w-full">
-          {view === 'kanban' && <KanbanView data={kanban} setData={setKanban} user={user} config={config} showToast={showToast} openCardId={openCardId} setOpenCardId={setOpenCardId} />}
-          {view === 'calendar' && <CalendarView data={kanban} setData={setKanban} config={config} onOpenCard={(id) => { setView('kanban'); setOpenCardId(id); }} />}
-          {view === 'traffic' && <TrafficView data={reports} setData={setReports} user={user} config={config} showToast={showToast} />}
-          {view === 'finance' && <FinanceView data={finances} setData={setFinances} user={user} config={config} showToast={showToast} />}
-          {view === 'docs' && <DocsView data={docs} setData={setDocs} user={user} config={config} />}
-          {view === 'settings' && <SettingsView config={config} setConfig={setConfig} users={users} setUsers={setUsers} showToast={showToast} />}
+          {view === 'kanban' && <KanbanView data={safeArray(kanban)} setData={setKanban} user={user} config={safeConf} showToast={showToast} openCardId={openCardId} setOpenCardId={setOpenCardId} />}
+          {view === 'calendar' && <CalendarView data={safeArray(kanban)} config={safeConf} onOpenCard={(id) => { setView('kanban'); setOpenCardId(id); }} />}
+          {view === 'traffic' && <TrafficView data={safeArray(reports)} setData={setReports} user={user} config={safeConf} showToast={showToast} />}
+          {view === 'finance' && <FinanceView data={safeArray(finances)} setData={setFinances} user={user} config={safeConf} showToast={showToast} />}
+          {view === 'docs' && <DocsView data={safeArray(docs)} setData={setDocs} user={user} config={safeConf} />}
+          {view === 'settings' && <SettingsView config={safeConf} setConfig={setConfig} users={safeArray(users)} setUsers={setUsers} showToast={showToast} />}
         </div>
         
-        <footer className="mt-12 pt-6 border-t border-gray-200/50 text-center text-xs font-semibold" style={{ color: `${config.textColor}80` }}>
+        <footer className="mt-12 pt-6 border-t border-gray-200/50 text-center text-xs font-semibold" style={{ color: `${safeConf.textColor}80` }}>
           Este é um app oficial Azione Marketing, todos os direitos reservados!
         </footer>
       </main>
-      
       {toast && <Toast msg={toast} onClose={() => setToast('')} />}
     </div>
   );
@@ -279,7 +298,7 @@ function KanbanView({ data, setData, user, config, showToast, openCardId, setOpe
   const onDragOver = (e) => e.preventDefault();
   const onDrop = (e, col) => {
     const id = e.dataTransfer.getData('cardId');
-    setData(prev => prev.map(c => c.id === id ? { ...c, col } : c));
+    setData(prev => safeArray(prev).map(c => c.id === id ? { ...c, col } : c));
   };
 
   const createCard = () => {
@@ -288,6 +307,9 @@ function KanbanView({ data, setData, user, config, showToast, openCardId, setOpe
     setActiveCard(newCard);
   };
 
+  // Permissão de criar novos cards
+  const canCreate = ['master', 'social media', 'gestor de tráfego'].includes(user.role);
+
   return (
     <div className="h-full flex flex-col">
       <div className="flex justify-between items-center mb-8">
@@ -295,7 +317,7 @@ function KanbanView({ data, setData, user, config, showToast, openCardId, setOpe
           <h1 className="text-3xl font-black">Esteira de Produção</h1>
           <p className="text-sm font-medium opacity-70 mt-1">Gerencie cards, aprove posts e acompanhe o funil de mídia.</p>
         </div>
-        {['gestor', 'administrador', 'midias'].includes(user.role) && (
+        {canCreate && (
           <button onClick={createCard} className="flex items-center gap-2 text-white px-5 py-2.5 rounded-xl shadow-lg hover:opacity-90 font-bold transition-transform hover:scale-105" style={{ backgroundColor: config.color }}>
             <Plus size={18} /> Novo Card
           </button>
@@ -315,7 +337,7 @@ function KanbanView({ data, setData, user, config, showToast, openCardId, setOpe
                   <h4 className="font-bold text-gray-800 mb-2 group-hover:text-blue-600 transition-colors">{card.title}</h4>
                   <div className="flex items-center justify-between text-xs font-semibold text-gray-400 mt-3 pt-3 border-t border-gray-50">
                     {card.date ? <span className="flex items-center gap-1"><Calendar size={12}/> {new Date(card.date).toLocaleDateString('pt-BR')}</span> : <span>Sem data</span>}
-                    <span className="flex items-center gap-1 bg-gray-50 px-2 py-1 rounded-md"><MessageSquare size={12}/> {card.comments.length}</span>
+                    <span className="flex items-center gap-1 bg-gray-50 px-2 py-1 rounded-md"><MessageSquare size={12}/> {safeArray(card.comments).length}</span>
                   </div>
                 </div>
               ))}
@@ -326,7 +348,7 @@ function KanbanView({ data, setData, user, config, showToast, openCardId, setOpe
 
       {activeCard && (
         <CardModal card={activeCard} user={user} config={config} showToast={showToast} onClose={() => setActiveCard(null)} onSave={(updated) => {
-          setData(prev => prev.map(c => c.id === updated.id ? updated : c));
+          setData(prev => safeArray(prev).map(c => c.id === updated.id ? updated : c));
           setActiveCard(null);
         }} />
       )}
@@ -335,18 +357,13 @@ function KanbanView({ data, setData, user, config, showToast, openCardId, setOpe
 }
 
 function CardModal({ card, user, config, onClose, onSave, showToast }) {
-  const [draft, setDraft] = useState({ ...card });
+  const [draft, setDraft] = useState({ ...card, comments: safeArray(card.comments), carousel: safeArray(card.carousel) });
   const [commentText, setCommentText] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
   const [aiPrompt, setAiPrompt] = useState('');
 
-  const canEditCore = ['gestor', 'administrador', 'midias'].includes(user.role);
+  const canEditCore = ['master', 'social media', 'gestor de tráfego'].includes(user.role);
   
-  const formatDriveLink = (url) => {
-    if (!url) return '';
-    return url.replace(/\/view.*$/, '/preview').replace(/\/edit.*$/, '/preview');
-  };
-
   const handleAI = async () => {
     setAiLoading(true);
     try {
@@ -420,23 +437,9 @@ function CardModal({ card, user, config, onClose, onSave, showToast }) {
                   )}
                 </div>
               )}
-              
-              {/* Previews */}
-              <div className="mt-4 flex flex-col gap-4">
-                {!draft.isCarousel && draft.link && draft.link.includes('drive.google.com') && (
-                  <iframe src={formatDriveLink(draft.link)} className="w-full h-72 border border-gray-200 rounded-xl bg-white shadow-sm" title="Preview"></iframe>
-                )}
-                {draft.isCarousel && draft.carousel.map((link, idx) => link && link.includes('drive.google.com') && (
-                  <div key={idx} className="flex flex-col gap-1">
-                    <span className="text-xs font-bold text-gray-400 uppercase">Slide {idx + 1}</span>
-                    <iframe src={formatDriveLink(link)} className="w-full h-72 border border-gray-200 rounded-xl bg-white shadow-sm" title={`Preview ${idx + 1}`}></iframe>
-                  </div>
-                ))}
-              </div>
             </div>
           </div>
 
-          {/* Coluna Direita */}
           <div className="space-y-5 flex flex-col">
             <div className="flex-1 flex flex-col">
               <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Legenda (Copy)</label>
@@ -458,7 +461,7 @@ function CardModal({ card, user, config, onClose, onSave, showToast }) {
               <div className="bg-gray-50 border border-gray-200 rounded-2xl p-4 h-48 overflow-y-auto space-y-3 mb-3 custom-scrollbar shadow-inner">
                 {draft.comments.length === 0 && <p className="text-xs font-medium text-gray-400 text-center mt-6">Nenhuma observação ainda.</p>}
                 {draft.comments.map((c, i) => (
-                  <div key={i} className={`p-3 rounded-xl border text-sm ${['empresa', 'cliente'].includes(c.author) ? 'bg-blue-50 border-blue-100' : 'bg-white border-gray-100 shadow-sm'}`}>
+                  <div key={i} className={`p-3 rounded-xl border text-sm ${c.author === 'empresa' ? 'bg-blue-50 border-blue-100' : 'bg-white border-gray-100 shadow-sm'}`}>
                     <div className="flex justify-between items-center text-xs mb-1.5">
                       <span className="font-bold text-gray-800 uppercase tracking-wider">{getDisplayRole(c.author)}</span>
                       <span className="text-gray-400 font-medium">{new Date(c.date).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short'})}</span>
@@ -507,26 +510,26 @@ function CalendarView({ data, config, onOpenCard }) {
               <p className="font-bold opacity-60">Nenhum post programado com data definida.</p>
             </div>
           )}
-          {progCards.map(c => (
-            <div key={c.id} className="flex flex-col md:flex-row md:items-center p-5 border-l-[6px] rounded-r-2xl bg-white shadow-sm hover:shadow-md transition-shadow group" style={{ borderLeftColor: config.color }}>
-              <div className="w-full md:w-32 flex-shrink-0 text-center border-b md:border-b-0 md:border-r border-gray-100 pb-3 md:pb-0 md:pr-5 mb-3 md:mb-0">
-                <p className="text-3xl font-black" style={{ color: config.color }}>{new Date(c.date).getDate() + 1}</p>
-                <p className="text-xs uppercase font-black opacity-40">{new Date(c.date).toLocaleString('pt-BR', { month: 'long', year: 'numeric' })}</p>
+          {progCards.map(c => {
+             // Força a data ao meio dia para evitar erro de fuso
+             const safeDate = new Date(c.date.length === 10 ? `${c.date}T12:00:00` : c.date);
+             return (
+              <div key={c.id} className="flex flex-col md:flex-row md:items-center p-5 border-l-[6px] rounded-r-2xl bg-white shadow-sm hover:shadow-md transition-shadow group" style={{ borderLeftColor: config.color }}>
+                <div className="w-full md:w-32 flex-shrink-0 text-center border-b md:border-b-0 md:border-r border-gray-100 pb-3 md:pb-0 md:pr-5 mb-3 md:mb-0">
+                  <p className="text-3xl font-black" style={{ color: config.color }}>{safeDate.getDate()}</p>
+                  <p className="text-xs uppercase font-black opacity-40">{safeDate.toLocaleString('pt-BR', { month: 'long', year: 'numeric' })}</p>
+                </div>
+                <div className="md:pl-5 flex-1 mb-4 md:mb-0">
+                  <h3 className="font-black text-lg group-hover:text-blue-600 transition-colors">{c.title}</h3>
+                  <p className="text-sm opacity-70 line-clamp-2 mt-1">{c.caption || c.desc}</p>
+                </div>
+                <div className="md:px-4 flex flex-row md:flex-col gap-2 items-start md:items-end w-full md:w-auto">
+                  <span className="text-xs font-bold bg-gray-100 py-1.5 px-4 rounded-full border border-gray-200 uppercase tracking-wider opacity-80">Agendado</span>
+                  <button onClick={() => onOpenCard(c.id)} className="text-xs font-bold bg-gray-800 hover:bg-black text-white py-1.5 px-4 rounded-full transition-colors shadow-sm w-full md:w-auto">Ver no Kanban</button>
+                </div>
               </div>
-              <div className="md:pl-5 flex-1 mb-4 md:mb-0">
-                <h3 className="font-black text-lg group-hover:text-blue-600 transition-colors">{c.title}</h3>
-                <p className="text-sm opacity-70 line-clamp-2 mt-1">{c.caption || c.desc}</p>
-              </div>
-              <div className="md:px-4 flex flex-row md:flex-col gap-2 items-start md:items-end w-full md:w-auto">
-                <span className="text-xs font-bold bg-gray-100 py-1.5 px-4 rounded-full border border-gray-200 uppercase tracking-wider opacity-80">
-                  Agendado
-                </span>
-                <button onClick={() => onOpenCard(c.id)} className="text-xs font-bold bg-gray-800 hover:bg-black text-white py-1.5 px-4 rounded-full transition-colors shadow-sm w-full md:w-auto">
-                  Ver no Kanban
-                </button>
-              </div>
-            </div>
-          ))}
+             );
+          })}
         </div>
       </div>
     </div>
@@ -534,8 +537,9 @@ function CalendarView({ data, config, onOpenCard }) {
 }
 
 function TrafficView({ data, setData, user, config, showToast }) {
-  const isClient = ['empresa', 'cliente'].includes(user.role);
-  const [activeTab, setActiveTab] = useState('looker'); // 'looker', 'reports'
+  const isClient = user.role === 'empresa';
+  const isAdmin = ['master', 'gestor de tráfego'].includes(user.role);
+  const [activeTab, setActiveTab] = useState('dataStudio'); // 'dataStudio', 'reports'
   const [expandedId, setExpandedId] = useState(null);
   const [aiLoadingId, setAiLoadingId] = useState(null);
 
@@ -546,24 +550,38 @@ function TrafficView({ data, setData, user, config, showToast }) {
   };
 
   const addReport = () => {
-    const newRep = { id: Date.now(), date: new Date().toISOString().split('T')[0], leads: 0, cost: '0', contracts: 0, attachment: '', aiAnalysis: '', custom: [] };
+    const newRep = { 
+      id: Date.now(), 
+      name: 'Novo Fechamento', 
+      month: new Date().toISOString().slice(0, 7), 
+      date: new Date().toISOString().split('T')[0], 
+      leads: 0, cost: '0', contracts: 0, 
+      attachment: '', aiAnalysis: '', observations: '', custom: [] 
+    };
     setData([newRep, ...data]);
     setExpandedId(newRep.id);
+  };
+
+  const deleteReport = (id) => {
+    if(window.confirm('Atenção: Tem certeza que deseja excluir permanentemente este relatório?')) {
+      setData(data.filter(r => r.id !== id));
+      showToast('Relatório apagado com sucesso.');
+    }
   };
 
   const generateAIForReport = async (reportId) => {
     setAiLoadingId(reportId);
     try {
       const rep = data.find(r => r.id === reportId);
-      const metricsText = `Leads: ${rep.leads}, Custo por Lead: R$ ${rep.cost}, Contratos Fechados: ${rep.contracts}. ` + rep.custom.map(c => `${c.label}: ${c.value}`).join(', ');
+      const customMetrics = safeArray(rep.custom).map(c => `${c.label}: ${c.value}`).join(', ');
+      const metricsText = `Leads Gerados: ${rep.leads}, Custo Médio por Lead (CPL): R$ ${rep.cost}, Contratos Fechados: ${rep.contracts}. ${customMetrics}`;
       
-      const prompt = `Atuando de forma extremamente profissional como a agência ${config.companyName}, redija uma análise de performance executiva para nosso cliente referente ao período atual. Use os seguintes dados extraídos do dashboard do Google/Meta Ads: ${metricsText}. \nDivida o texto usando headers markdown (##) nestas seções: "Resumo Executivo do Período", "Análise de Plataformas e Eficiência", e "Próximos Passos e Recomendações". Não mencione que você é uma IA, aja 100% como um analista humano sênior enviando um relatório direto ao cliente.`;
-      const sysInst = "Você é um Analista Senior de Performance. Produza um relatório claro, profissional e focado em resultados reais.";
+      const prompt = `Atuando de forma profissional como a agência ${config.companyName}, redija uma análise de performance executiva para nosso cliente referente ao período de ${rep.month || 'deste mês'}. Analise os seguintes dados do Data Studio: ${metricsText}. Divida o texto usando headers markdown (##) nestas seções: "Resumo Executivo do Período", "Análise de Eficiência (Custos x Leads)", "Próximos Passos e Recomendações". Não mencione que você é uma IA.`;
+      const sysInst = "Você é um Analista Senior de Performance. Produza um relatório claro, profissional e focado em interpretar dados.";
 
       const { text, model } = await callGeminiAPI(prompt, sysInst, config, showToast);
-      
       setData(data.map(d => d.id === reportId ? { ...d, aiAnalysis: text } : d));
-      showToast(`Análise gerada e incorporada com sucesso (${model})!`);
+      showToast(`Análise gerada com sucesso! (${model})`);
     } catch (e) {
       showToast(e.message);
     } finally {
@@ -575,29 +593,27 @@ function TrafficView({ data, setData, user, config, showToast }) {
     <div className="max-w-6xl mx-auto flex flex-col h-full">
       <div className="flex flex-col md:flex-row md:justify-between md:items-end mb-8 gap-4">
         <div>
-          <h1 className="text-3xl font-black">Performance & Business Intelligence</h1>
-          <p className="text-sm font-medium opacity-70 mt-1">Acompanhe as métricas e relatórios das suas campanhas de tráfego.</p>
+          <h1 className="text-3xl font-black">Dados de Tráfego</h1>
+          <p className="text-sm font-medium opacity-70 mt-1">Acompanhe o Data Studio e os relatórios analíticos do período.</p>
         </div>
         
-        {/* Navegação de Abas - Unificada e Adaptada por Perfil */}
         <div className="flex bg-gray-200/50 p-1 rounded-xl w-fit">
-          <button onClick={() => setActiveTab('looker')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'looker' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}>
-            <BarChart3 size={16}/> Dashboard Integrado
+          <button onClick={() => setActiveTab('dataStudio')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'dataStudio' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}>
+            <BarChart3 size={16}/> Dashboard Data Studio
           </button>
           <button onClick={() => setActiveTab('reports')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'reports' ? 'bg-white shadow-sm text-green-600' : 'text-gray-500 hover:text-gray-800'}`}>
-            <FileSearch size={16}/> {isClient ? 'Relatórios Azione' : 'Gerenciar Relatórios'}
+            <FileSearch size={16}/> {isClient ? 'Relatórios Mensais' : 'Gerenciar Relatórios'}
           </button>
         </div>
       </div>
 
-      {/* ABA 1: LOOKER STUDIO */}
-      {activeTab === 'looker' && (
+      {activeTab === 'dataStudio' && (
         <div className="flex-1 bg-white rounded-3xl shadow-sm border border-gray-200/50 overflow-hidden flex flex-col min-h-[600px]">
           {config.lookerStudioUrl ? (
             <div className="flex-1 flex flex-col">
               <div className="bg-yellow-50 p-3 text-center text-xs font-bold text-yellow-700 border-b border-yellow-200 flex flex-col md:flex-row justify-center items-center gap-2">
                 <span className="text-xl">⚠️</span> 
-                <span><strong>Aviso de Segurança Google:</strong> Se o painel não carregar, acesse seu Looker Studio, vá em <strong>Arquivo &gt; Incorporar Relatório</strong> e marque a caixa <strong>Ativar Incorporação</strong>.</span>
+                <span><strong>Aviso Google:</strong> Para carregar, vá no Data Studio &gt; <strong>Editar &gt; Arquivo &gt; Incorporar Relatório</strong> e marque <strong>Ativar Incorporação</strong>.</span>
               </div>
               <iframe src={getEmbedUrl(config.lookerStudioUrl)} frameBorder="0" style={{ border: 0 }} allowFullScreen className="w-full h-full flex-1 min-h-[700px]"></iframe>
             </div>
@@ -605,18 +621,17 @@ function TrafficView({ data, setData, user, config, showToast }) {
             <div className="flex flex-col items-center justify-center h-full flex-1 p-12 text-center opacity-60">
               <BarChart3 size={64} className="mb-4" />
               <h3 className="text-xl font-bold">Dashboard não configurado</h3>
-              <p className="text-sm mt-2">O Gestor precisa inserir a URL do Looker Studio na aba de Configurações.</p>
+              <p className="text-sm mt-2">É necessário inserir a URL do Data Studio na aba de Configurações.</p>
             </div>
           )}
         </div>
       )}
 
-      {/* ABA 2: RELATÓRIOS (Visão Unificada: IA + PDF) */}
       {activeTab === 'reports' && (
         <div className="max-w-5xl w-full mx-auto space-y-5">
-          {!isClient && (
+          {isAdmin && (
             <div className="flex justify-between items-center bg-blue-50 border border-blue-100 p-4 rounded-2xl mb-2">
-              <p className="text-sm font-semibold text-blue-800">Extraia o PDF do Looker Studio, insira os dados cruciais abaixo e gere uma análise para o cliente com IA.</p>
+              <p className="text-sm font-semibold text-blue-800">Crie os fechamentos baseados no Data Studio e gere análises IA.</p>
               <button onClick={addReport} className="flex items-center gap-2 text-white px-5 py-2.5 rounded-xl shadow-lg font-bold transition-transform hover:scale-105" style={{ backgroundColor: config.color }}>
                 <Plus size={18} /> Novo Relatório
               </button>
@@ -629,87 +644,113 @@ function TrafficView({ data, setData, user, config, showToast }) {
                 <div className="flex items-center gap-5">
                   <div className="w-14 h-14 rounded-2xl flex items-center justify-center shadow-inner" style={{ backgroundColor: `${config.secondaryColor}20`, color: config.secondaryColor }}><TrendingUp size={26}/></div>
                   <div>
-                    <h3 className="font-black text-xl text-gray-800">Relatório de Performance</h3>
-                    <p className="text-sm font-bold opacity-60 mt-0.5">Mês de Referência: {new Date(rep.date).toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' }).toUpperCase()}</p>
+                    <h3 className="font-black text-xl text-gray-800">{rep.name || 'Relatório sem nome'}</h3>
+                    <p className="text-sm font-bold opacity-60 mt-0.5">Referência: {rep.month ? rep.month : 'Não definida'} (Clique para expandir)</p>
                   </div>
                 </div>
-                <div className="bg-gray-100 p-3 rounded-xl text-gray-500 shadow-sm border border-gray-200">
-                  {expandedId === rep.id ? <ChevronUp size={20}/> : <ChevronDown size={20}/>}
+                <div className="flex items-center gap-4">
+                  {isAdmin && (
+                     <button onClick={(e) => { e.stopPropagation(); deleteReport(rep.id); }} className="p-2.5 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 transition-colors" title="Apagar Relatório"><Trash2 size={18}/></button>
+                  )}
+                  <div className="bg-gray-100 p-3 rounded-xl text-gray-500 shadow-sm border border-gray-200">
+                    {expandedId === rep.id ? <ChevronUp size={20}/> : <ChevronDown size={20}/>}
+                  </div>
                 </div>
               </div>
 
               {expandedId === rep.id && (
                 <div className="border-t border-gray-100">
                   
-                  {/* VISÃO DO GESTOR: Inserção de Dados e Geração */}
-                  {!isClient && (
+                  {isAdmin && (
                     <div className="p-6 bg-gray-50/80 border-b border-gray-200/50">
-                      <h4 className="text-xs font-black text-gray-400 uppercase tracking-wider mb-4">1. Inserção de Métricas do Dashboard</h4>
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-                        <MetricBox label="Leads Totais" val={rep.leads} onChange={v => { const n = [...data]; n[idx].leads = v; setData(n); }} edit={true} color={config.color} />
-                        <MetricBox label="Custo / Lead" val={`R$ ${rep.cost}`} onChange={v => { const n = [...data]; n[idx].cost = v.replace('R$ ', ''); setData(n); }} edit={true} color={config.color} />
-                        <MetricBox label="Contratos" val={rep.contracts} onChange={v => { const n = [...data]; n[idx].contracts = v; setData(n); }} edit={true} color={config.color} />
-                        {rep.custom.map((c, cidx) => (
-                          <MetricBox key={cidx} label={c.label} val={c.value} onChange={v => { const n = [...data]; n[idx].custom[cidx].value = v; setData(n); }} edit={true} color={config.color} />
-                        ))}
-                        <div className="border-2 border-dashed border-gray-300 p-2 rounded-2xl flex flex-col items-center justify-center bg-white hover:bg-gray-50 transition-colors">
-                           <button onClick={() => { const label = prompt("Nome da nova métrica (Ex: ROAS):"); if(label) { const n = [...data]; n[idx].custom.push({ label, value: '0' }); setData(n); } }} className="text-xs font-bold text-gray-500 hover:text-blue-600 w-full">+ Adicionar</button>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                        <div>
+                          <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1">Nome do Relatório</label>
+                          <input value={rep.name || ''} onChange={e => { const n = [...data]; n[idx].name = e.target.value; setData(n); }} className="w-full p-3 bg-white border border-gray-200 rounded-xl outline-none font-bold text-gray-800 focus:border-blue-400" placeholder="Ex: Fechamento Março" />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1">Mês de Performance</label>
+                          <input type="month" value={rep.month || ''} onChange={e => { const n = [...data]; n[idx].month = e.target.value; setData(n); }} className="w-full p-3 bg-white border border-gray-200 rounded-xl outline-none font-bold text-gray-800 focus:border-blue-400" />
                         </div>
                       </div>
 
-                      <h4 className="text-xs font-black text-gray-400 uppercase tracking-wider mb-4">2. Análise do Período</h4>
-                      <div className="flex flex-col gap-3">
+                      <h4 className="text-xs font-black text-gray-400 uppercase tracking-wider mb-4 border-t border-gray-200 pt-6">1. Inserção de Métricas</h4>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+                        <MetricBox label="Leads Totais" val={rep.leads} onChange={v => { const n = [...data]; n[idx].leads = v; setData(n); }} edit={true} color={config.color} />
+                        <MetricBox label="Custo / Lead" val={`R$ ${rep.cost}`} onChange={v => { const n = [...data]; n[idx].cost = v.replace('R$ ', ''); setData(n); }} edit={true} color={config.color} />
+                        <MetricBox label="Contratos" val={rep.contracts} onChange={v => { const n = [...data]; n[idx].contracts = v; setData(n); }} edit={true} color={config.color} />
+                        {safeArray(rep.custom).map((c, cidx) => (
+                          <div key={cidx} className="relative group">
+                            <MetricBox label={c.label} val={c.value} onChange={v => { const n = [...data]; n[idx].custom[cidx].value = v; setData(n); }} edit={true} color={config.color} />
+                            <button onClick={() => { const n = [...data]; n[idx].custom.splice(cidx, 1); setData(n); }} className="absolute -top-2 -right-2 bg-red-100 text-red-600 rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"><X size={12}/></button>
+                          </div>
+                        ))}
+                        <div className="border-2 border-dashed border-gray-300 p-2 rounded-2xl flex flex-col items-center justify-center bg-white hover:bg-gray-50 transition-colors">
+                           <button onClick={() => { const label = prompt("Métrica (Ex: Investimento):"); if(label) { const n = [...data]; n[idx].custom = safeArray(n[idx].custom); n[idx].custom.push({ label, value: '0' }); setData(n); } }} className="text-xs font-bold text-gray-500 hover:text-blue-600 w-full">+ Métrica</button>
+                        </div>
+                      </div>
+
+                      <h4 className="text-xs font-black text-gray-400 uppercase tracking-wider mb-4">2. Análise da IA (Editável)</h4>
+                      <div className="flex flex-col gap-3 mb-6">
                         <textarea 
-                          value={rep.aiAnalysis} 
+                          value={rep.aiAnalysis || ''} 
                           onChange={e => { const n = [...data]; n[idx].aiAnalysis = e.target.value; setData(n); }} 
-                          className="w-full p-5 border border-gray-200 rounded-2xl outline-none focus:border-blue-400 min-h-[200px] text-gray-700 bg-white leading-relaxed shadow-inner resize-none"
-                          placeholder="Você pode escrever a análise manualmente aqui ou usar a Inteligência Artificial clicando no botão abaixo..."
+                          className="w-full p-5 border border-purple-200 rounded-2xl outline-none focus:border-purple-400 min-h-[250px] text-gray-800 bg-purple-50/30 leading-relaxed shadow-inner resize-none"
                         />
                         <button 
                           onClick={() => generateAIForReport(rep.id)} 
                           disabled={aiLoadingId === rep.id} 
                           className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-bold px-6 py-3.5 rounded-xl shadow-md transition-transform hover:scale-[1.01] flex items-center justify-center gap-2 disabled:opacity-70"
                         >
-                          {aiLoadingId === rep.id ? <span className="animate-pulse">Analisando métricas e elaborando relatório...</span> : <><BrainCircuit size={18}/> Redigir Análise com IA (Baseado nas Métricas)</>}
+                          {aiLoadingId === rep.id ? <span className="animate-pulse">A IA está redigindo...</span> : <><BrainCircuit size={18}/> Gerar Texto com IA (Baseado no Data Studio)</>}
                         </button>
                       </div>
 
-                      <h4 className="text-xs font-black text-gray-400 uppercase tracking-wider mt-8 mb-4">3. Anexar PDF do Looker Studio</h4>
-                      <div className="flex gap-2">
-                        <input value={rep.attachment} onChange={e => { const n = [...data]; n[idx].attachment = e.target.value; setData(n); }} className="flex-1 p-3 border border-gray-200 rounded-xl outline-none text-sm bg-white" placeholder="Link do Google Drive contendo o PDF do relatório..." />
-                      </div>
+                      <h4 className="text-xs font-black text-gray-400 uppercase tracking-wider mb-4">3. Observações Extras</h4>
+                      <textarea value={rep.observations || ''} onChange={e => { const n = [...data]; n[idx].observations = e.target.value; setData(n); }} className="w-full p-4 border border-gray-200 rounded-2xl outline-none focus:border-blue-400 min-h-[100px] text-gray-700 bg-white" />
+
+                      <h4 className="text-xs font-black text-gray-400 uppercase tracking-wider mt-8 mb-4">4. Anexar PDF do Data Studio</h4>
+                      <input value={rep.attachment || ''} onChange={e => { const n = [...data]; n[idx].attachment = e.target.value; setData(n); }} className="w-full p-3 border border-gray-200 rounded-xl outline-none text-sm bg-white" placeholder="Link do Google Drive..." />
                     </div>
                   )}
 
-                  {/* VISÃO DO CLIENTE: O Relatório Pronto, Bonito e Profissional */}
                   <div className="p-8 bg-white">
                     <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4 border-b border-gray-100 pb-6">
                       <div>
-                        <h2 className="text-2xl font-black" style={{ color: config.color }}>Análise Executiva</h2>
-                        <p className="text-sm text-gray-500 font-semibold mt-1">Visão estratégica da equipe {config.companyName}</p>
+                        <h2 className="text-2xl font-black" style={{ color: config.color }}>{rep.name || 'Análise Executiva'}</h2>
+                        <p className="text-sm text-gray-500 font-semibold mt-1">Período de {rep.month || 'Não especificado'}</p>
                       </div>
                       {rep.attachment && (
-                        <a href={rep.attachment} target="_blank" rel="noreferrer" className="flex items-center gap-2 px-6 py-3 rounded-xl font-bold text-white shadow-lg transition-transform hover:scale-105 w-full md:w-auto justify-center" style={{ backgroundColor: config.secondaryColor }}>
-                          <Download size={18}/> Baixar Relatório em PDF
+                        <a href={rep.attachment} target="_blank" rel="noreferrer" className="flex items-center gap-2 px-6 py-3 rounded-xl font-bold text-white shadow-lg transition-transform hover:scale-105" style={{ backgroundColor: config.secondaryColor }}>
+                          <Download size={18}/> Baixar PDF
                         </a>
                       )}
                     </div>
 
-                    {!rep.aiAnalysis ? (
-                      <div className="text-center py-10 opacity-40 font-bold text-gray-500">A análise estratégica deste período está sendo elaborada pela equipe.</div>
+                    {(!rep.aiAnalysis && !rep.observations) ? (
+                      <div className="text-center py-10 opacity-40 font-bold text-gray-500">Este relatório ainda está sendo preenchido.</div>
                     ) : (
-                      <div className="prose prose-lg max-w-none text-gray-700">
-                        {rep.aiAnalysis.split('\n').map((line, i) => {
-                          if(line.startsWith('##')) return <h3 key={i} className="text-xl font-black mt-8 mb-4 text-gray-800 border-l-4 pl-3" style={{ borderLeftColor: config.color }}>{line.replace(/#/g, '')}</h3>;
-                          if(line.startsWith('#')) return <h2 key={i} className="text-2xl font-black mt-8 mb-4 text-gray-900">{line.replace(/#/g, '')}</h2>;
-                          if(line.startsWith('* ') || line.startsWith('- ')) return <li key={i} className="ml-4 mb-2">{line.substring(2).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</li>;
-                          if(!line.trim()) return <br key={i}/>;
-                          return <p key={i} className="mb-4 leading-relaxed" dangerouslySetInnerHTML={{__html: line.replace(/\*\*(.*?)\*\*/g, '<strong class="text-gray-900">$1</strong>')}}></p>;
-                        })}
+                      <div className="space-y-8">
+                        {rep.aiAnalysis && (
+                          <div className="prose prose-lg max-w-none text-gray-700">
+                            {rep.aiAnalysis.split('\n').map((line, i) => {
+                              if(line.startsWith('##')) return <h3 key={i} className="text-xl font-black mt-8 mb-4 text-gray-800 border-l-4 pl-3" style={{ borderLeftColor: config.color }}>{line.replace(/#/g, '')}</h3>;
+                              if(line.startsWith('#')) return <h2 key={i} className="text-2xl font-black mt-8 mb-4 text-gray-900">{line.replace(/#/g, '')}</h2>;
+                              if(line.startsWith('* ') || line.startsWith('- ')) return <li key={i} className="ml-4 mb-2">{line.substring(2).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</li>;
+                              if(!line.trim()) return <br key={i}/>;
+                              return <p key={i} className="mb-4 leading-relaxed" dangerouslySetInnerHTML={{__html: line.replace(/\*\*(.*?)\*\*/g, '<strong class="text-gray-900">$1</strong>')}}></p>;
+                            })}
+                          </div>
+                        )}
+                        {rep.observations && (
+                          <div className="bg-yellow-50 border border-yellow-100 p-6 rounded-2xl">
+                            <h4 className="text-sm font-black text-yellow-800 uppercase tracking-widest mb-3 flex items-center gap-2"><FileText size={16}/> Observações Extras</h4>
+                            <p className="text-yellow-900 whitespace-pre-wrap leading-relaxed text-sm">{rep.observations}</p>
+                          </div>
+                        )}
                       </div>
                     )}
                   </div>
-
                 </div>
               )}
             </div>
@@ -725,7 +766,7 @@ function MetricBox({ label, val, onChange, edit, color }) {
     <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-center items-center text-center">
       <span className="text-[10px] text-gray-500 font-black uppercase tracking-widest mb-2">{label}</span>
       {edit ? (
-        <input value={val} onChange={e => onChange(e.target.value)} className="font-black text-2xl text-center w-full outline-none border-b-2 focus:border-opacity-100 border-transparent transition-colors" style={{ color: color, focusBorderColor: color }} />
+        <input value={val || ''} onChange={e => onChange(e.target.value)} className="font-black text-2xl text-center w-full outline-none border-b-2 focus:border-opacity-100 border-transparent transition-colors" style={{ color: color, borderBottomColor: color }} />
       ) : (
         <span className="font-black text-2xl" style={{ color: color }}>{val}</span>
       )}
@@ -734,18 +775,18 @@ function MetricBox({ label, val, onChange, edit, color }) {
 }
 
 function FinanceView({ data, setData, user, config, showToast }) {
-  const isAdmin = ['gestor', 'administrador'].includes(user.role);
+  const isAdmin = user.role === 'master';
   const [editingFin, setEditingFin] = useState(null);
 
   const copyPix = (pix) => {
-    if(!pix) return showToast("Nenhuma chave PIX cadastrada!");
+    if(!pix) return showToast("Nenhuma chave PIX!");
     const el = document.createElement('textarea'); el.value = pix; document.body.appendChild(el); el.select(); document.execCommand('copy'); document.body.removeChild(el);
-    showToast("Chave PIX copiada com sucesso!");
+    showToast("PIX copiado!");
   };
 
   const handleSaveModal = (updatedFin) => {
     if(updatedFin.id === 'new') setData([...data, { ...updatedFin, id: Date.now() }]);
-    else setData(data.map(d => d.id === updatedFin.id ? updatedFin : d));
+    else setData(safeArray(data).map(d => d.id === updatedFin.id ? updatedFin : d));
     setEditingFin(null);
   };
 
@@ -767,17 +808,16 @@ function FinanceView({ data, setData, user, config, showToast }) {
         <table className="w-full text-left border-collapse">
           <thead>
             <tr className="bg-gray-100/50 text-sm uppercase tracking-wider font-bold opacity-70 border-b border-gray-200/50">
-              <th className="p-5">Descrição do Serviço</th>
-              <th className="p-5">Vencimento</th>
-              <th className="p-5">Status</th>
-              <th className="p-5 text-right">Ações e Documentos</th>
+              <th className="p-5">Descrição do Serviço</th><th className="p-5">Vencimento</th><th className="p-5">Status</th><th className="p-5 text-right">Ações</th>
             </tr>
           </thead>
           <tbody>
-            {data.map((fin) => (
+            {data.map((fin) => {
+              const safeDate = new Date(fin.due?.length === 10 ? `${fin.due}T12:00:00` : fin.due);
+              return (
               <tr key={fin.id} className="border-b border-gray-100 hover:bg-white transition-colors">
                 <td className="p-5 font-black text-gray-800 text-lg">{fin.desc}</td>
-                <td className="p-5 font-semibold opacity-80">{fin.due ? new Date(fin.due).toLocaleDateString('pt-BR') : 'N/A'}</td>
+                <td className="p-5 font-semibold opacity-80">{fin.due ? safeDate.toLocaleDateString('pt-BR') : 'N/A'}</td>
                 <td className="p-5">
                   <span className={`px-3 py-1.5 rounded-full text-xs font-black uppercase tracking-wide border shadow-sm ${fin.status === 'Pago' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-yellow-50 text-yellow-700 border-yellow-200'}`}>
                     {fin.status || 'Pendente'}
@@ -796,13 +836,12 @@ function FinanceView({ data, setData, user, config, showToast }) {
                   )}
                 </td>
               </tr>
-            ))}
-            {data.length === 0 && <tr><td colSpan="4" className="p-10 text-center font-bold opacity-50">Nenhuma fatura encontrada no sistema.</td></tr>}
+            )})}
+            {data.length === 0 && <tr><td colSpan="4" className="p-10 text-center font-bold opacity-50">Nenhuma fatura encontrada.</td></tr>}
           </tbody>
         </table>
       </div>
 
-      {/* Modal Finanças igual ao anterior, reestilizado */}
       {editingFin && (
         <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl space-y-5 text-gray-800">
@@ -819,22 +858,21 @@ function FinanceView({ data, setData, user, config, showToast }) {
               <div className="flex-1">
                 <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Status</label>
                 <select value={editingFin.status || 'Pendente'} onChange={e => setEditingFin({...editingFin, status: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none font-bold bg-gray-50 focus:bg-white">
-                  <option value="Pendente">Pendente</option>
-                  <option value="Pago">Pago</option>
+                  <option value="Pendente">Pendente</option><option value="Pago">Pago</option>
                 </select>
               </div>
             </div>
             <div>
               <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Chave PIX</label>
-              <input value={editingFin.pix} onChange={e => setEditingFin({...editingFin, pix: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none bg-gray-50 focus:bg-white" placeholder="Celular, CNPJ, Email ou Aleatória..." />
+              <input value={editingFin.pix} onChange={e => setEditingFin({...editingFin, pix: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none bg-gray-50 focus:bg-white" />
             </div>
             <div>
-              <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Link do Boleto (Google Drive/PDF)</label>
-              <input value={editingFin.boleto} onChange={e => setEditingFin({...editingFin, boleto: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none bg-gray-50 focus:bg-white text-sm" placeholder="https://..." />
+              <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Link do Boleto</label>
+              <input value={editingFin.boleto} onChange={e => setEditingFin({...editingFin, boleto: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none bg-gray-50 focus:bg-white text-sm" />
             </div>
             <div>
-              <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Link da Nota Fiscal (Google Drive/PDF)</label>
-              <input value={editingFin.nf} onChange={e => setEditingFin({...editingFin, nf: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none bg-gray-50 focus:bg-white text-sm" placeholder="https://..." />
+              <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Link da Nota Fiscal</label>
+              <input value={editingFin.nf} onChange={e => setEditingFin({...editingFin, nf: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none bg-gray-50 focus:bg-white text-sm" />
             </div>
             <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
               <button onClick={() => setEditingFin(null)} className="px-6 py-3 font-bold text-gray-500 hover:bg-gray-100 rounded-xl transition-colors">Cancelar</button>
@@ -848,7 +886,7 @@ function FinanceView({ data, setData, user, config, showToast }) {
 }
 
 function DocsView({ data, setData, user, config }) {
-  const isAdmin = ['gestor', 'administrador'].includes(user.role);
+  const isAdmin = user.role === 'master';
   const [editingDocLink, setEditingDocLink] = useState(null);
 
   return (
@@ -866,21 +904,23 @@ function DocsView({ data, setData, user, config }) {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-        {data.map((doc, idx) => (
+        {data.map((doc, idx) => {
+          const safeDate = new Date(doc.date?.length === 10 ? `${doc.date}T12:00:00` : doc.date);
+          return (
           <div key={doc.id} className="bg-white/60 backdrop-blur-md p-6 rounded-3xl shadow-sm border border-gray-200/50 flex flex-col gap-4 hover:shadow-md transition-shadow">
             <div className="flex items-center justify-between w-full">
               <div className="flex items-center gap-5 w-full pr-2">
                 <div className="w-14 h-14 rounded-2xl flex-shrink-0 flex items-center justify-center shadow-inner" style={{ backgroundColor: `${config.secondaryColor}20`, color: config.secondaryColor }}><FileText size={28}/></div>
                 <div className="w-full">
                   {isAdmin ? <input value={doc.title} onChange={e => { const n = [...data]; n[idx].title = e.target.value; setData(n); }} className="font-black text-lg border-b-2 border-transparent focus:border-gray-300 bg-transparent outline-none text-gray-800 w-full transition-colors" placeholder="Título Legal..." /> : <h3 className="font-black text-lg text-gray-800">{doc.title}</h3>}
-                  {isAdmin ? <input type="date" value={doc.date} onChange={e => { const n = [...data]; n[idx].date = e.target.value; setData(n); }} className="text-xs font-bold opacity-60 bg-transparent outline-none mt-1 w-full" /> : <p className="text-xs font-bold opacity-60 mt-1">Data Assinatura: {new Date(doc.date).toLocaleDateString('pt-BR')}</p>}
+                  {isAdmin ? <input type="date" value={doc.date} onChange={e => { const n = [...data]; n[idx].date = e.target.value; setData(n); }} className="text-xs font-bold opacity-60 bg-transparent outline-none mt-1 w-full" /> : <p className="text-xs font-bold opacity-60 mt-1">Data Assinatura: {doc.date ? safeDate.toLocaleDateString('pt-BR') : 'S/ Data'}</p>}
                 </div>
               </div>
               <div className="flex gap-2">
                 {isAdmin && (
                   <>
                     <button onClick={() => setEditingDocLink(editingDocLink === doc.id ? null : doc.id)} className="p-3 bg-gray-100 rounded-xl hover:bg-gray-200 text-gray-600 transition-colors"><Edit3 size={18}/></button>
-                    <button onClick={() => setData(data.filter(d => d.id !== doc.id))} className="p-3 bg-red-50 rounded-xl hover:bg-red-100 text-red-600 transition-colors"><Trash2 size={18}/></button>
+                    <button onClick={() => setData(safeArray(data).filter(d => d.id !== doc.id))} className="p-3 bg-red-50 rounded-xl hover:bg-red-100 text-red-600 transition-colors"><Trash2 size={18}/></button>
                   </>
                 )}
                 <a href={doc.link || '#'} target="_blank" rel="noreferrer" onClick={e => !doc.link && e.preventDefault()} className={`p-3 rounded-xl transition-colors shadow-sm ${doc.link ? 'text-white' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`} style={doc.link ? { backgroundColor: config.color } : {}}><Download size={18}/></a>
@@ -893,14 +933,14 @@ function DocsView({ data, setData, user, config }) {
               </div>
             )}
           </div>
-        ))}
+        )})}
       </div>
     </div>
   );
 }
 
 function SettingsView({ config, setConfig, users, setUsers, showToast }) {
-  const [newUser, setNewUser] = useState({ login: '', pass: '', role: 'cliente', name: '' });
+  const [newUser, setNewUser] = useState({ login: '', pass: '', role: 'empresa', name: '' });
   const [testingApi, setTestingApi] = useState(false);
 
   const handleTestApi = async () => {
@@ -917,7 +957,6 @@ function SettingsView({ config, setConfig, users, setUsers, showToast }) {
     }
   };
 
-  // Componente Reutilizável para Input de Códigos HEX Livres
   const HexInput = ({ label, value, onChange }) => (
     <div>
       <label className="text-[10px] font-bold opacity-60 uppercase tracking-wider block mb-1">{label}</label>
@@ -935,7 +974,6 @@ function SettingsView({ config, setConfig, users, setUsers, showToast }) {
         <p className="text-sm font-medium opacity-70 mt-1">Ajuste cores globais, integrações de IA e gerencie os usuários do sistema.</p>
       </div>
       
-      {/* 1. Customização Visual Avançada */}
       <div className="bg-white/80 backdrop-blur-md p-8 rounded-3xl shadow-sm border border-gray-200/50 space-y-6">
         <h2 className="text-xl font-black border-b border-gray-100 pb-3 flex items-center gap-2">🎨 Identidade Visual (White-label)</h2>
         
@@ -960,13 +998,12 @@ function SettingsView({ config, setConfig, users, setUsers, showToast }) {
         </div>
       </div>
 
-      {/* 2. Integrações Poderosas */}
       <div className="bg-white/80 backdrop-blur-md p-8 rounded-3xl shadow-sm border border-gray-200/50 space-y-6">
-        <h2 className="text-xl font-black border-b border-gray-100 pb-3 flex items-center gap-2">🔗 Motores Externos (Looker & IA)</h2>
+        <h2 className="text-xl font-black border-b border-gray-100 pb-3 flex items-center gap-2">🔗 Motores Externos (Data Studio & IA)</h2>
         <div className="space-y-5">
           <div>
-            <label className="text-xs font-bold opacity-60 uppercase tracking-wider block mb-1">Dashboard Embed URL (Looker Studio)</label>
-            <input value={config.lookerStudioUrl} onChange={e => setConfig({...config, lookerStudioUrl: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none text-sm bg-gray-50 focus:bg-white focus:border-blue-400 font-medium" placeholder="Cole o link do seu relatório Looker Studio aqui..." />
+            <label className="text-xs font-bold opacity-60 uppercase tracking-wider block mb-1">Dashboard Embed URL (Data Studio)</label>
+            <input value={config.lookerStudioUrl || ''} onChange={e => setConfig({...config, lookerStudioUrl: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none text-sm bg-gray-50 focus:bg-white focus:border-blue-400 font-medium" placeholder="Cole o link do seu relatório Data Studio aqui..." />
             <p className="text-[10px] font-bold text-blue-600 mt-1 uppercase tracking-wide">Cole o link padrão e o sistema converterá em Embed Automaticamente.</p>
           </div>
           <div>
@@ -977,15 +1014,15 @@ function SettingsView({ config, setConfig, users, setUsers, showToast }) {
                 {testingApi ? 'Testando...' : 'Verificar API'}
               </button>
             </div>
+            <p className="text-[10px] text-gray-500 mt-2">Crie a chave gratuitamente em: aistudio.google.com</p>
           </div>
         </div>
       </div>
 
-      {/* 3. Usuários */}
       <div className="bg-white/80 backdrop-blur-md p-8 rounded-3xl shadow-sm border border-gray-200/50 space-y-6">
         <h2 className="text-xl font-black border-b border-gray-100 pb-3">👥 Gerenciamento de Acessos</h2>
         <div className="space-y-3">
-          {users.map((u, i) => (
+          {safeArray(users).map((u, i) => (
             <div key={u.id} className="flex gap-3 items-center border border-gray-100 p-3 rounded-2xl bg-gray-50 shadow-inner">
               <span className="bg-white shadow-sm border border-gray-200 text-xs font-black px-3 py-1.5 rounded-lg uppercase tracking-wider w-32 text-center text-gray-700">{getDisplayRole(u.role)}</span>
               <input value={u.login} onChange={e => { const n = [...users]; n[i].login = e.target.value; setUsers(n); }} className="flex-1 outline-none font-bold text-gray-800 bg-transparent" placeholder="Login" />
@@ -998,14 +1035,15 @@ function SettingsView({ config, setConfig, users, setUsers, showToast }) {
         <div className="mt-8 pt-6 border-t border-gray-200/50">
           <h3 className="text-sm font-black text-gray-800 mb-3 uppercase tracking-wider">Novo Colaborador / Cliente</h3>
           <div className="flex flex-col md:flex-row gap-3 items-center">
-            <select value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value})} className="p-3.5 border border-gray-200 rounded-xl outline-none font-bold text-sm w-full md:w-40 bg-white shadow-sm focus:border-blue-400">
-              <option value="cliente">Cliente</option>
-              <option value="administrador">Administrador</option>
-              <option value="midias">Mídias</option>
+            <select value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value})} className="p-3.5 border border-gray-200 rounded-xl outline-none font-bold text-sm w-full md:w-48 bg-white shadow-sm focus:border-blue-400">
+              <option value="empresa">Empresa</option>
+              <option value="master">Master</option>
+              <option value="gestor de tráfego">Gestor de Tráfego</option>
+              <option value="social media">Social Media</option>
             </select>
             <input value={newUser.login} onChange={e => setNewUser({...newUser, login: e.target.value})} className="flex-1 p-3.5 border border-gray-200 rounded-xl outline-none font-bold text-sm w-full bg-white shadow-sm focus:border-blue-400" placeholder="Nome de Usuário" />
             <input value={newUser.pass} onChange={e => setNewUser({...newUser, pass: e.target.value})} className="flex-1 p-3.5 border border-gray-200 rounded-xl outline-none font-medium text-sm w-full bg-white shadow-sm focus:border-blue-400" placeholder="Senha Forte" type="text" />
-            <button onClick={() => { if(newUser.login) { setUsers([...users, {...newUser, id:Date.now()}]); setNewUser({login:'', pass:'', role:'cliente', name:''}); showToast("Usuário adicionado!"); }}} className="w-full md:w-auto px-8 py-3.5 rounded-xl font-black text-white shadow-lg transition-transform hover:scale-105" style={{ backgroundColor: config.color }}>Adicionar</button>
+            <button onClick={() => { if(newUser.login) { setUsers([...users, {...newUser, id:Date.now()}]); setNewUser({login:'', pass:'', role:'empresa', name:''}); showToast("Usuário adicionado!"); }}} className="w-full md:w-auto px-8 py-3.5 rounded-xl font-black text-white shadow-lg transition-transform hover:scale-105" style={{ backgroundColor: config.color }}>Adicionar</button>
           </div>
         </div>
       </div>
