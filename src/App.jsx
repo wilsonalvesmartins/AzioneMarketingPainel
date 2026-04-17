@@ -112,28 +112,13 @@ function usePersistentState(key, initialValue) {
   return [state, setPersistentState, isLoaded];
 }
 
-// --- FUNÇÃO GLOBAL DE CHAMADA DO GEMINI ---
+// --- FUNÇÃO GLOBAL DE CHAMADA DO GEMINI (ROBUSTA À FORÇA BRUTA) ---
 const callGeminiAPI = async (prompt, systemInstruction, config, showToast) => {
   if (!config.geminiKey) throw new Error("Chave API do Gemini não configurada.");
   
-  let modelsToTry = ['gemini-2.5-flash', 'gemini-1.5-pro-latest', 'gemini-1.5-flash-latest', 'gemini-1.5-pro', 'gemini-1.5-flash', 'gemini-pro'];
+  // Hardcoded fallback list: Se um estiver congestionado (503) pula pro próximo
+  const modelsToTry = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro'];
   let lastError = '';
-
-  try {
-    const resModels = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${config.geminiKey}`);
-    if (resModels.ok) {
-      const data = await resModels.json();
-      const availableModels = data.models
-        .filter(m => m.supportedGenerationMethods?.includes('generateContent') && m.name.includes('gemini'))
-        .map(m => m.name.replace('models/', ''));
-      
-      const validModels = modelsToTry.filter(m => availableModels.includes(m));
-      if (validModels.length > 0) modelsToTry = validModels;
-      else if (availableModels.length > 0) modelsToTry = [availableModels[0]];
-    }
-  } catch (err) {
-    console.warn("Falha ao listar modelos dinamicamente. Usando fallback.", err);
-  }
 
   const finalPrompt = `[INSTRUÇÕES DA PERSONA E DO SISTEMA]:\n${systemInstruction}\n\n[TAREFA DO USUÁRIO]:\n${prompt}`;
 
@@ -143,16 +128,21 @@ const callGeminiAPI = async (prompt, systemInstruction, config, showToast) => {
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${config.geminiKey}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
       });
+      
       const result = await res.json();
       if (!res.ok) throw new Error(result.error?.message || `Erro HTTP ${res.status}`);
+      
       const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
       if (text) return { text, model };
+      
       throw new Error("Resposta vazia da IA.");
     } catch (e) {
       lastError = e.message;
+      console.warn(`Tentativa com ${model} falhou:`, e.message);
+      // Continua pro próximo do loop silenciosamente
     }
   }
-  throw new Error(`Falha após tentar os modelos disponíveis. Último erro: ${lastError}`);
+  throw new Error(`Falha após tentar múltiplos modelos. Último erro: ${lastError}`);
 };
 
 // --- COMPONENTES DE UI ---
@@ -196,7 +186,6 @@ export default function App() {
     const found = safeArray(users).find(u => u.login === login && u.pass === pass);
     if (found) { 
       setUser(found); 
-      // Redirecionamento inteligente baseado na role
       if(found.role === 'gestor de tráfego') setView('traffic');
       else setView('kanban'); 
     } 
@@ -260,7 +249,7 @@ export default function App() {
       </aside>
 
       <main className="flex-1 p-4 md:p-8 overflow-y-auto w-full max-w-[100vw] flex flex-col relative" style={{ color: safeConf.textColor }}>
-        <div className="flex-1 max-w-7xl mx-auto w-full">
+        <div className="flex-1 w-full" style={view !== 'traffic' ? { maxWidth: '80rem', margin: '0 auto' } : {}}>
           {view === 'kanban' && <KanbanView data={safeArray(kanban)} setData={setKanban} user={user} config={safeConf} showToast={showToast} openCardId={openCardId} setOpenCardId={setOpenCardId} />}
           {view === 'calendar' && <CalendarView data={safeArray(kanban)} config={safeConf} onOpenCard={(id) => { setView('kanban'); setOpenCardId(id); }} />}
           {view === 'traffic' && <TrafficView data={safeArray(reports)} setData={setReports} user={user} config={safeConf} showToast={showToast} />}
@@ -331,7 +320,7 @@ function KanbanView({ data, setData, user, config, showToast, openCardId, setOpe
               <h3 className="font-bold text-lg opacity-90">{col}</h3>
               <span className="text-white text-xs font-bold px-2.5 py-1 rounded-full shadow-sm" style={{ backgroundColor: config.secondaryColor }}>{data.filter(c => c.col === col).length}</span>
             </div>
-            <div className="flex flex-col gap-3 overflow-y-auto pr-1">
+            <div className="flex flex-col gap-3 overflow-y-auto pr-1 custom-scrollbar">
               {data.filter(c => c.col === col).map(card => (
                 <div key={card.id} draggable onDragStart={(e) => onDragStart(e, card.id)} onClick={() => setActiveCard(card)} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 cursor-pointer hover:shadow-md hover:border-gray-300 transition-all active:scale-95 group">
                   <h4 className="font-bold text-gray-800 mb-2 group-hover:text-blue-600 transition-colors">{card.title}</h4>
@@ -389,7 +378,7 @@ function CardModal({ card, user, config, onClose, onSave, showToast }) {
           <button onClick={onClose} className="p-2 bg-white rounded-full hover:bg-gray-200 shadow-sm transition-colors text-gray-500"><X size={20}/></button>
         </div>
         
-        <div className="p-6 overflow-y-auto flex-1 grid grid-cols-1 lg:grid-cols-2 gap-8 bg-white">
+        <div className="p-6 overflow-y-auto flex-1 grid grid-cols-1 lg:grid-cols-2 gap-8 bg-white custom-scrollbar">
           <div className="space-y-5">
             <div>
               <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Título</label>
@@ -443,7 +432,7 @@ function CardModal({ card, user, config, onClose, onSave, showToast }) {
           <div className="space-y-5 flex flex-col">
             <div className="flex-1 flex flex-col">
               <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Legenda (Copy)</label>
-              <textarea value={draft.caption} onChange={e => setDraft({...draft, caption: e.target.value})} className="w-full p-4 border border-gray-200 rounded-xl outline-none focus:border-blue-500 flex-1 min-h-[150px] resize-none mb-3 bg-gray-50/50 leading-relaxed text-gray-700" placeholder="Escreva a legenda ou gere com IA..." />
+              <textarea value={draft.caption} onChange={e => setDraft({...draft, caption: e.target.value})} className="w-full p-4 border border-gray-200 rounded-xl outline-none focus:border-blue-500 flex-1 min-h-[150px] resize-none mb-3 bg-gray-50/50 leading-relaxed text-gray-700 custom-scrollbar" placeholder="Escreva a legenda ou gere com IA..." />
               
               {canEditCore && (
                 <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 p-4 rounded-2xl">
@@ -471,7 +460,7 @@ function CardModal({ card, user, config, onClose, onSave, showToast }) {
                 ))}
               </div>
               <div className="flex gap-2">
-                <input value={commentText} onChange={e => setCommentText(e.target.value)} placeholder="Deixe um comentário para a equipe..." className="flex-1 p-3 border border-gray-200 rounded-xl outline-none text-sm bg-gray-50 focus:bg-white focus:border-blue-400 transition-colors" />
+                <input value={commentText} onChange={e => setCommentText(e.target.value)} placeholder="Deixe um comentário..." className="flex-1 p-3 border border-gray-200 rounded-xl outline-none text-sm bg-gray-50 focus:bg-white focus:border-blue-400 transition-colors" />
                 <button onClick={() => {
                   if(!commentText.trim()) return;
                   setDraft({...draft, comments: [...draft.comments, { author: user.role, text: commentText, date: new Date().toISOString() }]});
@@ -511,7 +500,6 @@ function CalendarView({ data, config, onOpenCard }) {
             </div>
           )}
           {progCards.map(c => {
-             // Força a data ao meio dia para evitar erro de fuso
              const safeDate = new Date(c.date.length === 10 ? `${c.date}T12:00:00` : c.date);
              return (
               <div key={c.id} className="flex flex-col md:flex-row md:items-center p-5 border-l-[6px] rounded-r-2xl bg-white shadow-sm hover:shadow-md transition-shadow group" style={{ borderLeftColor: config.color }}>
@@ -539,7 +527,6 @@ function CalendarView({ data, config, onOpenCard }) {
 function TrafficView({ data, setData, user, config, showToast }) {
   const isClient = user.role === 'empresa';
   const isAdmin = ['master', 'gestor de tráfego'].includes(user.role);
-  const [activeTab, setActiveTab] = useState('dataStudio'); // 'dataStudio', 'reports'
   const [expandedId, setExpandedId] = useState(null);
   const [aiLoadingId, setAiLoadingId] = useState(null);
 
@@ -563,7 +550,7 @@ function TrafficView({ data, setData, user, config, showToast }) {
   };
 
   const deleteReport = (id) => {
-    if(window.confirm('Atenção: Tem certeza que deseja excluir permanentemente este relatório?')) {
+    if(window.confirm('Atenção: Tem certeza que deseja excluir este relatório?')) {
       setData(data.filter(r => r.id !== id));
       showToast('Relatório apagado com sucesso.');
     }
@@ -577,7 +564,7 @@ function TrafficView({ data, setData, user, config, showToast }) {
       const metricsText = `Leads Gerados: ${rep.leads}, Custo Médio por Lead (CPL): R$ ${rep.cost}, Contratos Fechados: ${rep.contracts}. ${customMetrics}`;
       
       const prompt = `Atuando de forma profissional como a agência ${config.companyName}, redija uma análise de performance executiva para nosso cliente referente ao período de ${rep.month || 'deste mês'}. Analise os seguintes dados do Data Studio: ${metricsText}. Divida o texto usando headers markdown (##) nestas seções: "Resumo Executivo do Período", "Análise de Eficiência (Custos x Leads)", "Próximos Passos e Recomendações". Não mencione que você é uma IA.`;
-      const sysInst = "Você é um Analista Senior de Performance. Produza um relatório claro, profissional e focado em interpretar dados.";
+      const sysInst = "Você é um Analista Senior de Performance. Produza um relatório claro, profissional e focado em interpretar dados reais em português do Brasil.";
 
       const { text, model } = await callGeminiAPI(prompt, sysInst, config, showToast);
       setData(data.map(d => d.id === reportId ? { ...d, aiAnalysis: text } : d));
@@ -590,93 +577,87 @@ function TrafficView({ data, setData, user, config, showToast }) {
   };
 
   return (
-    <div className="max-w-6xl mx-auto flex flex-col h-full">
-      <div className="flex flex-col md:flex-row md:justify-between md:items-end mb-8 gap-4">
-        <div>
-          <h1 className="text-3xl font-black">Dados de Tráfego</h1>
-          <p className="text-sm font-medium opacity-70 mt-1">Acompanhe o Data Studio e os relatórios analíticos do período.</p>
-        </div>
-        
-        <div className="flex bg-gray-200/50 p-1 rounded-xl w-fit">
-          <button onClick={() => setActiveTab('dataStudio')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'dataStudio' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}>
-            <BarChart3 size={16}/> Dashboard Data Studio
-          </button>
-          <button onClick={() => setActiveTab('reports')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'reports' ? 'bg-white shadow-sm text-green-600' : 'text-gray-500 hover:text-gray-800'}`}>
-            <FileSearch size={16}/> {isClient ? 'Relatórios Mensais' : 'Gerenciar Relatórios'}
-          </button>
-        </div>
+    <div className="w-full flex flex-col h-full max-w-[1400px] mx-auto">
+      <div className="mb-6">
+        <h1 className="text-3xl font-black">Dados de Tráfego</h1>
+        <p className="text-sm font-medium opacity-70 mt-1">Dashboard Data Studio e Relatórios de Performance.</p>
       </div>
 
-      {activeTab === 'dataStudio' && (
-        <div className="flex-1 bg-white rounded-3xl shadow-sm border border-gray-200/50 overflow-hidden flex flex-col min-h-[600px]">
+      {/* LAYOUT TELA DIVIDIDA (SPLIT SCREEN) NO DESKTOP */}
+      <div className="flex flex-col lg:flex-row gap-6 items-stretch min-h-[800px] h-[calc(100vh-14rem)]">
+        
+        {/* Lado Esquerdo: DATA STUDIO (Fixo) */}
+        <div className="w-full lg:w-7/12 bg-white rounded-3xl shadow-sm border border-gray-200/50 flex flex-col overflow-hidden h-full">
           {config.lookerStudioUrl ? (
-            <div className="flex-1 flex flex-col">
-              <div className="bg-yellow-50 p-3 text-center text-xs font-bold text-yellow-700 border-b border-yellow-200 flex flex-col md:flex-row justify-center items-center gap-2">
-                <span className="text-xl">⚠️</span> 
-                <span><strong>Aviso Google:</strong> Para carregar, vá no Data Studio &gt; <strong>Editar &gt; Arquivo &gt; Incorporar Relatório</strong> e marque <strong>Ativar Incorporação</strong>.</span>
+            <div className="flex-1 flex flex-col h-full">
+              <div className="bg-yellow-50 p-2 text-center text-xs font-bold text-yellow-700 border-b border-yellow-200 flex-shrink-0">
+                ⚠️ Dica: No Data Studio vá em Editar &gt; Arquivo &gt; Incorporar Relatório &gt; Ativar Incorporação.
               </div>
-              <iframe src={getEmbedUrl(config.lookerStudioUrl)} frameBorder="0" style={{ border: 0 }} allowFullScreen className="w-full h-full flex-1 min-h-[700px]"></iframe>
+              <iframe src={getEmbedUrl(config.lookerStudioUrl)} frameBorder="0" style={{ border: 0 }} allowFullScreen className="w-full flex-1 min-h-[500px]"></iframe>
             </div>
           ) : (
             <div className="flex flex-col items-center justify-center h-full flex-1 p-12 text-center opacity-60">
               <BarChart3 size={64} className="mb-4" />
               <h3 className="text-xl font-bold">Dashboard não configurado</h3>
-              <p className="text-sm mt-2">É necessário inserir a URL do Data Studio na aba de Configurações.</p>
+              <p className="text-sm mt-2">Insira a URL do Data Studio na aba Configurações.</p>
             </div>
           )}
         </div>
-      )}
 
-      {activeTab === 'reports' && (
-        <div className="max-w-5xl w-full mx-auto space-y-5">
+        {/* Lado Direito: RELATÓRIOS E IA (Rolável) */}
+        <div className="w-full lg:w-5/12 flex flex-col space-y-4 overflow-y-auto pr-2 custom-scrollbar h-full pb-10">
+          
           {isAdmin && (
-            <div className="flex justify-between items-center bg-blue-50 border border-blue-100 p-4 rounded-2xl mb-2">
-              <p className="text-sm font-semibold text-blue-800">Crie os fechamentos baseados no Data Studio e gere análises IA.</p>
-              <button onClick={addReport} className="flex items-center gap-2 text-white px-5 py-2.5 rounded-xl shadow-lg font-bold transition-transform hover:scale-105" style={{ backgroundColor: config.color }}>
-                <Plus size={18} /> Novo Relatório
+            <div className="flex justify-between items-center bg-blue-50 border border-blue-100 p-4 rounded-2xl flex-shrink-0">
+              <p className="text-sm font-semibold text-blue-800 leading-tight">Analise o dashboard ao lado e crie um novo fechamento com IA.</p>
+              <button onClick={addReport} className="flex items-center gap-2 text-white px-4 py-2 rounded-xl shadow-lg font-bold transition-transform hover:scale-105 flex-shrink-0" style={{ backgroundColor: config.color }}>
+                <Plus size={16} /> Relatório
               </button>
             </div>
           )}
           
+          {data.length === 0 && (
+             <div className="text-center py-10 bg-white/50 rounded-2xl border border-gray-200 font-bold text-gray-400">Nenhum relatório cadastrado.</div>
+          )}
+
           {data.map((rep, idx) => (
-            <div key={rep.id} className="bg-white rounded-3xl shadow-sm border border-gray-200/50 overflow-hidden hover:shadow-md transition-shadow">
-              <div onClick={() => setExpandedId(expandedId === rep.id ? null : rep.id)} className="p-6 flex justify-between items-center cursor-pointer hover:bg-gray-50 transition-colors">
-                <div className="flex items-center gap-5">
-                  <div className="w-14 h-14 rounded-2xl flex items-center justify-center shadow-inner" style={{ backgroundColor: `${config.secondaryColor}20`, color: config.secondaryColor }}><TrendingUp size={26}/></div>
-                  <div>
-                    <h3 className="font-black text-xl text-gray-800">{rep.name || 'Relatório sem nome'}</h3>
-                    <p className="text-sm font-bold opacity-60 mt-0.5">Referência: {rep.month ? rep.month : 'Não definida'} (Clique para expandir)</p>
+            <div key={rep.id} className="bg-white rounded-3xl shadow-sm border border-gray-200/50 overflow-hidden hover:shadow-md transition-shadow flex-shrink-0">
+              <div onClick={() => setExpandedId(expandedId === rep.id ? null : rep.id)} className="p-5 flex justify-between items-center cursor-pointer hover:bg-gray-50 transition-colors">
+                <div className="flex items-center gap-4 truncate">
+                  <div className="w-12 h-12 rounded-xl flex items-center justify-center shadow-inner flex-shrink-0" style={{ backgroundColor: `${config.secondaryColor}20`, color: config.secondaryColor }}><TrendingUp size={20}/></div>
+                  <div className="truncate">
+                    <h3 className="font-black text-lg text-gray-800 truncate">{rep.name || 'Sem nome'}</h3>
+                    <p className="text-xs font-bold opacity-60 mt-0.5">Ref: {rep.month || 'N/A'}</p>
                   </div>
                 </div>
-                <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2 flex-shrink-0">
                   {isAdmin && (
-                     <button onClick={(e) => { e.stopPropagation(); deleteReport(rep.id); }} className="p-2.5 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 transition-colors" title="Apagar Relatório"><Trash2 size={18}/></button>
+                     <button onClick={(e) => { e.stopPropagation(); deleteReport(rep.id); }} className="p-2 bg-red-50 text-red-600 rounded-lg hover:bg-red-100 transition-colors" title="Apagar"><Trash2 size={16}/></button>
                   )}
-                  <div className="bg-gray-100 p-3 rounded-xl text-gray-500 shadow-sm border border-gray-200">
-                    {expandedId === rep.id ? <ChevronUp size={20}/> : <ChevronDown size={20}/>}
+                  <div className="bg-gray-100 p-2 rounded-lg text-gray-500 shadow-sm">
+                    {expandedId === rep.id ? <ChevronUp size={18}/> : <ChevronDown size={18}/>}
                   </div>
                 </div>
               </div>
 
               {expandedId === rep.id && (
                 <div className="border-t border-gray-100">
-                  
                   {isAdmin && (
-                    <div className="p-6 bg-gray-50/80 border-b border-gray-200/50">
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                    <div className="p-5 bg-gray-50/80 border-b border-gray-200/50">
+                      <div className="grid grid-cols-2 gap-3 mb-5">
                         <div>
-                          <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1">Nome do Relatório</label>
-                          <input value={rep.name || ''} onChange={e => { const n = [...data]; n[idx].name = e.target.value; setData(n); }} className="w-full p-3 bg-white border border-gray-200 rounded-xl outline-none font-bold text-gray-800 focus:border-blue-400" placeholder="Ex: Fechamento Março" />
+                          <label className="text-[10px] font-bold text-gray-400 uppercase block mb-1">Nome do Relatório</label>
+                          <input value={rep.name || ''} onChange={e => { const n = [...data]; n[idx].name = e.target.value; setData(n); }} className="w-full p-2.5 bg-white border border-gray-200 rounded-lg outline-none font-bold text-gray-800 focus:border-blue-400 text-sm" />
                         </div>
                         <div>
-                          <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1">Mês de Performance</label>
-                          <input type="month" value={rep.month || ''} onChange={e => { const n = [...data]; n[idx].month = e.target.value; setData(n); }} className="w-full p-3 bg-white border border-gray-200 rounded-xl outline-none font-bold text-gray-800 focus:border-blue-400" />
+                          <label className="text-[10px] font-bold text-gray-400 uppercase block mb-1">Mês Ref.</label>
+                          <input type="month" value={rep.month || ''} onChange={e => { const n = [...data]; n[idx].month = e.target.value; setData(n); }} className="w-full p-2.5 bg-white border border-gray-200 rounded-lg outline-none font-bold text-gray-800 focus:border-blue-400 text-sm" />
                         </div>
                       </div>
 
-                      <h4 className="text-xs font-black text-gray-400 uppercase tracking-wider mb-4 border-t border-gray-200 pt-6">1. Inserção de Métricas</h4>
-                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-                        <MetricBox label="Leads Totais" val={rep.leads} onChange={v => { const n = [...data]; n[idx].leads = v; setData(n); }} edit={true} color={config.color} />
+                      <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">1. Métricas Base</h4>
+                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-5">
+                        <MetricBox label="Leads" val={rep.leads} onChange={v => { const n = [...data]; n[idx].leads = v; setData(n); }} edit={true} color={config.color} />
                         <MetricBox label="Custo / Lead" val={`R$ ${rep.cost}`} onChange={v => { const n = [...data]; n[idx].cost = v.replace('R$ ', ''); setData(n); }} edit={true} color={config.color} />
                         <MetricBox label="Contratos" val={rep.contracts} onChange={v => { const n = [...data]; n[idx].contracts = v; setData(n); }} edit={true} color={config.color} />
                         {safeArray(rep.custom).map((c, cidx) => (
@@ -685,67 +666,63 @@ function TrafficView({ data, setData, user, config, showToast }) {
                             <button onClick={() => { const n = [...data]; n[idx].custom.splice(cidx, 1); setData(n); }} className="absolute -top-2 -right-2 bg-red-100 text-red-600 rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"><X size={12}/></button>
                           </div>
                         ))}
-                        <div className="border-2 border-dashed border-gray-300 p-2 rounded-2xl flex flex-col items-center justify-center bg-white hover:bg-gray-50 transition-colors">
-                           <button onClick={() => { const label = prompt("Métrica (Ex: Investimento):"); if(label) { const n = [...data]; n[idx].custom = safeArray(n[idx].custom); n[idx].custom.push({ label, value: '0' }); setData(n); } }} className="text-xs font-bold text-gray-500 hover:text-blue-600 w-full">+ Métrica</button>
+                        <div className="border-2 border-dashed border-gray-300 p-2 rounded-xl flex items-center justify-center bg-white hover:bg-gray-50 cursor-pointer" onClick={() => { const label = prompt("Métrica (Ex: Investimento):"); if(label) { const n = [...data]; n[idx].custom = safeArray(n[idx].custom); n[idx].custom.push({ label, value: '0' }); setData(n); } }}>
+                           <span className="text-xs font-bold text-gray-500">+ Métrica</span>
                         </div>
                       </div>
 
-                      <h4 className="text-xs font-black text-gray-400 uppercase tracking-wider mb-4">2. Análise da IA (Editável)</h4>
-                      <div className="flex flex-col gap-3 mb-6">
-                        <textarea 
-                          value={rep.aiAnalysis || ''} 
-                          onChange={e => { const n = [...data]; n[idx].aiAnalysis = e.target.value; setData(n); }} 
-                          className="w-full p-5 border border-purple-200 rounded-2xl outline-none focus:border-purple-400 min-h-[250px] text-gray-800 bg-purple-50/30 leading-relaxed shadow-inner resize-none"
-                        />
-                        <button 
-                          onClick={() => generateAIForReport(rep.id)} 
-                          disabled={aiLoadingId === rep.id} 
-                          className="bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-bold px-6 py-3.5 rounded-xl shadow-md transition-transform hover:scale-[1.01] flex items-center justify-center gap-2 disabled:opacity-70"
-                        >
-                          {aiLoadingId === rep.id ? <span className="animate-pulse">A IA está redigindo...</span> : <><BrainCircuit size={18}/> Gerar Texto com IA (Baseado no Data Studio)</>}
-                        </button>
-                      </div>
+                      <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">2. Análise (IA / Manual)</h4>
+                      <textarea 
+                        value={rep.aiAnalysis || ''} 
+                        onChange={e => { const n = [...data]; n[idx].aiAnalysis = e.target.value; setData(n); }} 
+                        className="w-full p-4 border border-purple-200 rounded-xl outline-none focus:border-purple-400 min-h-[200px] text-sm text-gray-800 bg-purple-50/30 leading-relaxed shadow-inner resize-none mb-3 custom-scrollbar"
+                      />
+                      <button 
+                        onClick={() => generateAIForReport(rep.id)} 
+                        disabled={aiLoadingId === rep.id} 
+                        className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-bold py-3 rounded-xl shadow-sm transition-transform hover:scale-[1.01] flex items-center justify-center gap-2 disabled:opacity-70 text-sm mb-5"
+                      >
+                        {aiLoadingId === rep.id ? <span className="animate-pulse">A IA está redigindo...</span> : <><BrainCircuit size={16}/> Gerar Texto IA (Lendo Métricas Acima)</>}
+                      </button>
 
-                      <h4 className="text-xs font-black text-gray-400 uppercase tracking-wider mb-4">3. Observações Extras</h4>
-                      <textarea value={rep.observations || ''} onChange={e => { const n = [...data]; n[idx].observations = e.target.value; setData(n); }} className="w-full p-4 border border-gray-200 rounded-2xl outline-none focus:border-blue-400 min-h-[100px] text-gray-700 bg-white" />
+                      <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">3. Observações Extras</h4>
+                      <textarea value={rep.observations || ''} onChange={e => { const n = [...data]; n[idx].observations = e.target.value; setData(n); }} className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:border-blue-400 min-h-[80px] text-sm text-gray-700 bg-white mb-5 resize-none" />
 
-                      <h4 className="text-xs font-black text-gray-400 uppercase tracking-wider mt-8 mb-4">4. Anexar PDF do Data Studio</h4>
-                      <input value={rep.attachment || ''} onChange={e => { const n = [...data]; n[idx].attachment = e.target.value; setData(n); }} className="w-full p-3 border border-gray-200 rounded-xl outline-none text-sm bg-white" placeholder="Link do Google Drive..." />
+                      <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">4. Link PDF Completo</h4>
+                      <input value={rep.attachment || ''} onChange={e => { const n = [...data]; n[idx].attachment = e.target.value; setData(n); }} className="w-full p-2.5 border border-gray-200 rounded-xl outline-none text-sm bg-white" placeholder="Link do Google Drive..." />
                     </div>
                   )}
 
-                  <div className="p-8 bg-white">
-                    <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4 border-b border-gray-100 pb-6">
-                      <div>
-                        <h2 className="text-2xl font-black" style={{ color: config.color }}>{rep.name || 'Análise Executiva'}</h2>
-                        <p className="text-sm text-gray-500 font-semibold mt-1">Período de {rep.month || 'Não especificado'}</p>
-                      </div>
+                  {/* VISÃO DO CLIENTE / FINAL */}
+                  <div className="p-6 bg-white">
+                    <div className="flex flex-col mb-6 gap-3 border-b border-gray-100 pb-4">
+                      <h2 className="text-xl font-black leading-tight" style={{ color: config.color }}>{rep.name || 'Análise Executiva'}</h2>
                       {rep.attachment && (
-                        <a href={rep.attachment} target="_blank" rel="noreferrer" className="flex items-center gap-2 px-6 py-3 rounded-xl font-bold text-white shadow-lg transition-transform hover:scale-105" style={{ backgroundColor: config.secondaryColor }}>
-                          <Download size={18}/> Baixar PDF
+                        <a href={rep.attachment} target="_blank" rel="noreferrer" className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-white shadow-sm text-xs w-fit transition-transform hover:scale-105" style={{ backgroundColor: config.secondaryColor }}>
+                          <Download size={14}/> Baixar PDF
                         </a>
                       )}
                     </div>
 
                     {(!rep.aiAnalysis && !rep.observations) ? (
-                      <div className="text-center py-10 opacity-40 font-bold text-gray-500">Este relatório ainda está sendo preenchido.</div>
+                      <div className="text-center py-6 opacity-40 font-bold text-gray-500 text-sm">Este relatório está sendo redigido.</div>
                     ) : (
-                      <div className="space-y-8">
+                      <div className="space-y-6">
                         {rep.aiAnalysis && (
-                          <div className="prose prose-lg max-w-none text-gray-700">
+                          <div className="prose prose-sm max-w-none text-gray-700">
                             {rep.aiAnalysis.split('\n').map((line, i) => {
-                              if(line.startsWith('##')) return <h3 key={i} className="text-xl font-black mt-8 mb-4 text-gray-800 border-l-4 pl-3" style={{ borderLeftColor: config.color }}>{line.replace(/#/g, '')}</h3>;
-                              if(line.startsWith('#')) return <h2 key={i} className="text-2xl font-black mt-8 mb-4 text-gray-900">{line.replace(/#/g, '')}</h2>;
-                              if(line.startsWith('* ') || line.startsWith('- ')) return <li key={i} className="ml-4 mb-2">{line.substring(2).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</li>;
+                              if(line.startsWith('##')) return <h3 key={i} className="text-lg font-black mt-6 mb-3 text-gray-800 border-l-4 pl-2" style={{ borderLeftColor: config.color }}>{line.replace(/#/g, '')}</h3>;
+                              if(line.startsWith('#')) return <h2 key={i} className="text-xl font-black mt-6 mb-3 text-gray-900">{line.replace(/#/g, '')}</h2>;
+                              if(line.startsWith('* ') || line.startsWith('- ')) return <li key={i} className="ml-4 mb-1">{line.substring(2).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</li>;
                               if(!line.trim()) return <br key={i}/>;
-                              return <p key={i} className="mb-4 leading-relaxed" dangerouslySetInnerHTML={{__html: line.replace(/\*\*(.*?)\*\*/g, '<strong class="text-gray-900">$1</strong>')}}></p>;
+                              return <p key={i} className="mb-3 leading-relaxed" dangerouslySetInnerHTML={{__html: line.replace(/\*\*(.*?)\*\*/g, '<strong class="text-gray-900">$1</strong>')}}></p>;
                             })}
                           </div>
                         )}
                         {rep.observations && (
-                          <div className="bg-yellow-50 border border-yellow-100 p-6 rounded-2xl">
-                            <h4 className="text-sm font-black text-yellow-800 uppercase tracking-widest mb-3 flex items-center gap-2"><FileText size={16}/> Observações Extras</h4>
-                            <p className="text-yellow-900 whitespace-pre-wrap leading-relaxed text-sm">{rep.observations}</p>
+                          <div className="bg-yellow-50 border border-yellow-100 p-4 rounded-xl">
+                            <h4 className="text-xs font-black text-yellow-800 uppercase tracking-widest mb-2 flex items-center gap-1.5"><FileText size={14}/> Observações</h4>
+                            <p className="text-yellow-900 whitespace-pre-wrap leading-relaxed text-xs">{rep.observations}</p>
                           </div>
                         )}
                       </div>
@@ -756,19 +733,19 @@ function TrafficView({ data, setData, user, config, showToast }) {
             </div>
           ))}
         </div>
-      )}
+      </div>
     </div>
   );
 }
 
 function MetricBox({ label, val, onChange, edit, color }) {
   return (
-    <div className="bg-white p-5 rounded-2xl border border-gray-100 shadow-sm flex flex-col justify-center items-center text-center">
-      <span className="text-[10px] text-gray-500 font-black uppercase tracking-widest mb-2">{label}</span>
+    <div className="bg-white p-3 md:p-4 rounded-xl border border-gray-100 shadow-sm flex flex-col justify-center items-center text-center">
+      <span className="text-[9px] md:text-[10px] text-gray-500 font-black uppercase tracking-widest mb-1.5 line-clamp-1">{label}</span>
       {edit ? (
-        <input value={val || ''} onChange={e => onChange(e.target.value)} className="font-black text-2xl text-center w-full outline-none border-b-2 focus:border-opacity-100 border-transparent transition-colors" style={{ color: color, borderBottomColor: color }} />
+        <input value={val || ''} onChange={e => onChange(e.target.value)} className="font-black text-xl text-center w-full outline-none border-b focus:border-opacity-100 border-transparent transition-colors bg-transparent" style={{ color: color, borderBottomColor: color }} />
       ) : (
-        <span className="font-black text-2xl" style={{ color: color }}>{val}</span>
+        <span className="font-black text-xl" style={{ color: color }}>{val}</span>
       )}
     </div>
   );
@@ -804,8 +781,8 @@ function FinanceView({ data, setData, user, config, showToast }) {
         )}
       </div>
 
-      <div className="bg-white/60 backdrop-blur-md rounded-3xl shadow-sm border border-gray-200/50 overflow-hidden">
-        <table className="w-full text-left border-collapse">
+      <div className="bg-white/60 backdrop-blur-md rounded-3xl shadow-sm border border-gray-200/50 overflow-hidden overflow-x-auto">
+        <table className="w-full text-left border-collapse min-w-[600px]">
           <thead>
             <tr className="bg-gray-100/50 text-sm uppercase tracking-wider font-bold opacity-70 border-b border-gray-200/50">
               <th className="p-5">Descrição do Serviço</th><th className="p-5">Vencimento</th><th className="p-5">Status</th><th className="p-5 text-right">Ações</th>
