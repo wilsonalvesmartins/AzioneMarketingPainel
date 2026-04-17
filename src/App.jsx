@@ -127,8 +127,8 @@ const defaultFinances = [
 ];
 
 const defaultReports = [{ 
-  id: 1, name: 'Fechamento de Performance', month: '2026-03', date: new Date().toISOString().split('T')[0], 
-  leads: 150, cost: '5.50', contracts: 10, attachment: '', 
+  id: 1, name: 'Fechamento de Performance', month: '2026-03', date: new Date().toISOString().split('T')[0], type: 'manual',
+  leads: 150, cost: '5.50', contracts: 10, attachment: '', aiAnalysis: '',
   custom: [{ label: 'Alcance Total', value: '45.000' }] 
 }];
 
@@ -343,6 +343,7 @@ function KanbanView({ data, setData, user, config, showToast, openCardId, setOpe
   const onDragStart = (e, id) => e.dataTransfer.setData('cardId', id);
   const onDragOver = (e) => e.preventDefault();
   const onDrop = (e, col) => {
+    e.preventDefault();
     const id = e.dataTransfer.getData('cardId');
     setData(prev => safeArray(prev).map(c => c.id === id ? { ...c, col } : c));
   };
@@ -351,6 +352,14 @@ function KanbanView({ data, setData, user, config, showToast, openCardId, setOpe
     const newCard = { id: Date.now().toString(), title: 'Nova Ideia', desc: '', link: '', col: 'Ideias', date: '', isCarousel: false, carousel: [], caption: '', comments: [] };
     setData([...data, newCard]);
     setActiveCard(newCard);
+  };
+
+  const deleteCard = (id) => {
+    if (window.confirm('Tem certeza que deseja apagar este card permanentemente?')) {
+      setData(prev => safeArray(prev).filter(c => c.id !== id));
+      setActiveCard(null);
+      showToast('Card apagado com sucesso.');
+    }
   };
 
   // Permissão de criar novos cards
@@ -372,14 +381,18 @@ function KanbanView({ data, setData, user, config, showToast, openCardId, setOpe
 
       <div className="flex gap-4 overflow-x-auto pb-6 flex-1 items-start snap-x custom-scrollbar">
         {columns.map(col => (
-          <div key={col} className="bg-white/40 backdrop-blur-md border border-gray-200/50 min-w-[300px] w-[300px] rounded-2xl p-4 flex flex-col max-h-[75vh] snap-start shadow-sm" onDragOver={onDragOver} onDrop={(e) => onDrop(e, col)}>
+          <div key={col} 
+               className="bg-white/40 backdrop-blur-md border border-gray-200/50 min-w-[300px] w-[300px] rounded-2xl p-4 flex flex-col max-h-[75vh] min-h-[50vh] snap-start shadow-sm" 
+               onDragOver={onDragOver} 
+               onDrop={(e) => onDrop(e, col)}>
             <div className="flex justify-between items-center mb-4 pb-2 border-b border-gray-200/50">
               <h3 className="font-bold text-lg opacity-90">{col}</h3>
               <span className="text-white text-xs font-bold px-2.5 py-1 rounded-full shadow-sm" style={{ backgroundColor: config.secondaryColor }}>{data.filter(c => c.col === col).length}</span>
             </div>
-            <div className="flex flex-col gap-3 overflow-y-auto pr-1 custom-scrollbar">
+            {/* flex-1 garante que a área de Drop ocupa o resto da coluna, mesmo se estiver vazia */}
+            <div className="flex flex-col gap-3 overflow-y-auto pr-1 custom-scrollbar flex-1 h-full">
               {data.filter(c => c.col === col).map(card => (
-                <div key={card.id} draggable onDragStart={(e) => onDragStart(e, card.id)} onClick={() => setActiveCard(card)} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 cursor-pointer hover:shadow-md hover:border-gray-300 transition-all active:scale-95 group">
+                <div key={card.id} draggable onDragStart={(e) => onDragStart(e, card.id)} onClick={() => setActiveCard(card)} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 cursor-pointer hover:shadow-md hover:border-blue-300 transition-all active:scale-95 group">
                   <h4 className="font-bold text-gray-800 mb-2 group-hover:text-blue-600 transition-colors">{card.title}</h4>
                   <div className="flex items-center justify-between text-xs font-semibold text-gray-400 mt-3 pt-3 border-t border-gray-50">
                     {card.date ? <span className="flex items-center gap-1"><Calendar size={12}/> {new Date(card.date).toLocaleDateString('pt-BR')}</span> : <span>Sem data</span>}
@@ -387,22 +400,35 @@ function KanbanView({ data, setData, user, config, showToast, openCardId, setOpe
                   </div>
                 </div>
               ))}
+              {data.filter(c => c.col === col).length === 0 && (
+                <div className="text-center py-6 border-2 border-dashed border-gray-200 rounded-xl opacity-50 flex-1 flex items-center justify-center pointer-events-none">
+                  <span className="text-xs font-bold uppercase tracking-wider text-gray-400">Soltar Aqui</span>
+                </div>
+              )}
             </div>
           </div>
         ))}
       </div>
 
       {activeCard && (
-        <CardModal card={activeCard} user={user} config={config} showToast={showToast} onClose={() => setActiveCard(null)} onSave={(updated) => {
-          setData(prev => safeArray(prev).map(c => c.id === updated.id ? updated : c));
-          setActiveCard(null);
-        }} />
+        <CardModal 
+          card={activeCard} 
+          user={user} 
+          config={config} 
+          showToast={showToast} 
+          onClose={() => setActiveCard(null)} 
+          onDelete={() => deleteCard(activeCard.id)}
+          onSave={(updated) => {
+            setData(prev => safeArray(prev).map(c => c.id === updated.id ? updated : c));
+            setActiveCard(null);
+          }} 
+        />
       )}
     </div>
   );
 }
 
-function CardModal({ card, user, config, onClose, onSave, showToast }) {
+function CardModal({ card, user, config, onClose, onSave, onDelete, showToast }) {
   const [draft, setDraft] = useState({ ...card, comments: safeArray(card.comments), carousel: safeArray(card.carousel) });
   const [commentText, setCommentText] = useState('');
   const [aiLoading, setAiLoading] = useState(false);
@@ -415,14 +441,11 @@ function CardModal({ card, user, config, onClose, onSave, showToast }) {
     try {
       const prompt = `Título do Post: ${draft.title}. Descrição: ${draft.desc}. Detalhes extras: ${aiPrompt}`;
       
-      // REGRA ESTREITA PARA O PROMPT: Zero conversação, apenas o texto final.
-      const systemInstruction = `Você é um redator e copywriter sênior especialista em conversão. 
-REGRA ABSOLUTA: Sua resposta deve conter EXCLUSIVAMENTE a legenda final pronta para uso.
-NÃO use introduções como "Aqui está a legenda", "Excelente!", "Vamos lá".
-NÃO use saudações.
-NÃO faça perguntas no final.
-Forneça apenas UMA opção de legenda focada em conversão, com um bom CTA e hashtags estratégicas no final.
-Apenas devolva o texto puro da legenda.`;
+      // REGRA EXTREMAMENTE ESTREITA PARA O PROMPT
+      const systemInstruction = `Você é um copywriter sênior focado em redes sociais.
+REGRA 1: Escreva UMA ÚNICA legenda focada em conversão, com um bom CTA e hashtags estratégicas.
+REGRA 2: Você está PROIBIDO de dizer "Aqui está a legenda", "Opção 1", "Claro, vamos lá!", ou fazer perguntas no final.
+REGRA 3: Não use separadores (---) ou títulos. Apenas devolva O TEXTO PURO E FINAL DA LEGENDA para ser copiado.`;
       
       const textoGerado = await callGeminiWithFallback(prompt, systemInstruction, config.geminiKey);
       
@@ -496,12 +519,12 @@ Apenas devolva o texto puro da legenda.`;
               {/* --- PREVIEWS DO GOOGLE DRIVE --- */}
               <div className="mt-4 flex flex-col gap-4">
                 {!draft.isCarousel && draft.link && draft.link.includes('drive.google.com') && (
-                  <iframe src={formatDriveLink(draft.link)} className="w-full h-72 border border-gray-200 rounded-xl bg-gray-50 shadow-sm" title="Preview"></iframe>
+                  <iframe src={formatDriveLink(draft.link)} className="w-full h-72 border border-gray-200 rounded-xl bg-white shadow-sm" title="Preview"></iframe>
                 )}
                 {draft.isCarousel && draft.carousel.map((link, idx) => link && link.includes('drive.google.com') && (
                   <div key={idx} className="flex flex-col gap-1">
                     <span className="text-xs font-bold text-gray-400 uppercase">Preview {idx + 1}</span>
-                    <iframe src={formatDriveLink(link)} className="w-full h-72 border border-gray-200 rounded-xl bg-gray-50 shadow-sm" title={`Preview ${idx + 1}`}></iframe>
+                    <iframe src={formatDriveLink(link)} className="w-full h-72 border border-gray-200 rounded-xl bg-white shadow-sm" title={`Preview ${idx + 1}`}></iframe>
                   </div>
                 ))}
               </div>
@@ -550,11 +573,16 @@ Apenas devolva o texto puro da legenda.`;
           </div>
         </div>
 
-        <div className="p-5 border-t border-gray-100 bg-gray-50 flex justify-end gap-3 rounded-b-2xl">
-          <button onClick={onClose} className="px-6 py-2.5 font-bold text-gray-500 hover:text-gray-800 hover:bg-gray-200 rounded-xl transition-colors">Cancelar</button>
-          <button onClick={() => onSave(draft)} className="px-6 py-2.5 font-bold text-white rounded-xl shadow-lg flex items-center gap-2 transition-transform hover:scale-105" style={{ backgroundColor: config.color }}>
-            <Save size={18}/> Salvar e Fechar
-          </button>
+        <div className="p-5 border-t border-gray-100 bg-gray-50 flex justify-between gap-3 rounded-b-2xl">
+          {canEditCore ? (
+            <button onClick={onDelete} className="px-5 py-2.5 font-bold text-red-500 hover:text-red-700 hover:bg-red-50 flex items-center gap-2 rounded-xl transition-colors"><Trash2 size={18}/> Apagar</button>
+          ) : <div></div>}
+          <div className="flex gap-3">
+            <button onClick={onClose} className="px-6 py-2.5 font-bold text-gray-500 hover:text-gray-800 hover:bg-gray-200 rounded-xl transition-colors">Cancelar</button>
+            <button onClick={() => onSave(draft)} className="px-6 py-2.5 font-bold text-white rounded-xl shadow-lg flex items-center gap-2 transition-transform hover:scale-105" style={{ backgroundColor: config.color }}>
+              <Save size={18}/> Salvar e Fechar
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -620,12 +648,19 @@ function TrafficView({ data, setData, user, config, showToast }) {
       id: Date.now(), 
       name: 'Novo Fechamento', 
       month: new Date().toISOString().slice(0, 7), 
+      type: 'manual', // manual ou pdf
       date: new Date().toISOString().split('T')[0], 
       leads: 0, cost: '0', contracts: 0, 
       attachment: '', custom: [] 
     };
     setData([newRep, ...data]);
     setExpandedId(newRep.id);
+  };
+
+  const updateReport = (idx, changes) => {
+    const n = [...data];
+    n[idx] = { ...n[idx], ...changes };
+    setData(n);
   };
 
   const deleteReport = (id) => {
@@ -656,13 +691,7 @@ function TrafficView({ data, setData, user, config, showToast }) {
       {activeTab === 'dataStudio' && (
         <div className="flex-1 bg-white rounded-3xl shadow-sm border border-gray-200/50 overflow-hidden flex flex-col min-h-[600px] relative">
           {config.lookerStudioUrl ? (
-            <>
-              {/* Barra Superior do Iframe */}
-              <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
-                <h3 className="font-bold text-gray-700 flex items-center gap-2"><BarChart3 size={18}/> Visualização Interativa</h3>
-              </div>
-              <iframe src={getEmbedUrl(config.lookerStudioUrl)} frameBorder="0" style={{ border: 0 }} allowFullScreen className="w-full flex-1 h-full min-h-[700px]"></iframe>
-            </>
+            <iframe src={getEmbedUrl(config.lookerStudioUrl)} frameBorder="0" style={{ border: 0 }} allowFullScreen className="w-full flex-1 h-full min-h-[700px]"></iframe>
           ) : (
             <div className="flex flex-col items-center justify-center h-full flex-1 p-12 text-center opacity-60">
               <BarChart3 size={64} className="mb-4" />
@@ -677,7 +706,7 @@ function TrafficView({ data, setData, user, config, showToast }) {
         <div className="w-full max-w-4xl mx-auto space-y-4 pb-10">
           {isAdmin && (
             <div className="flex justify-between items-center bg-blue-50 border border-blue-100 p-4 rounded-2xl flex-shrink-0 mb-4">
-              <p className="text-sm font-semibold text-blue-800 leading-tight">Cadastre e envie os PDFs dos relatórios do período para o cliente.</p>
+              <p className="text-sm font-semibold text-blue-800 leading-tight">Cadastre novos fechamentos manualmente ou através de PDFs.</p>
               <button onClick={addReport} className="flex items-center gap-2 text-white px-4 py-2 rounded-xl shadow-lg font-bold transition-transform hover:scale-105 flex-shrink-0" style={{ backgroundColor: config.color }}>
                 <Plus size={16} /> Novo Relatório
               </button>
@@ -714,59 +743,74 @@ function TrafficView({ data, setData, user, config, showToast }) {
                   {/* Edição Admin */}
                   {isAdmin && (
                     <div className="p-5 bg-gray-50/80 border-b border-gray-200/50">
+                      
+                      <div className="flex gap-4 mb-6 bg-gray-200 p-1.5 rounded-xl w-fit">
+                        <button onClick={() => updateReport(idx, {type: 'manual'})} className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${rep.type !== 'pdf' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500 hover:text-gray-700'}`}>Inserir Dados Manualmente</button>
+                        <button onClick={() => updateReport(idx, {type: 'pdf'})} className={`px-4 py-2 rounded-lg text-xs font-bold transition-all ${rep.type === 'pdf' ? 'bg-white shadow-sm text-gray-800' : 'text-gray-500 hover:text-gray-700'}`}>Inserir PDF Personalizado</button>
+                      </div>
+
                       <div className="grid grid-cols-2 gap-3 mb-5">
                         <div>
                           <label className="text-[10px] font-bold text-gray-400 uppercase block mb-1">Nome do Relatório</label>
-                          <input value={rep.name || ''} onChange={e => { const n = [...data]; n[idx].name = e.target.value; setData(n); }} className="w-full p-2.5 bg-white border border-gray-200 rounded-lg outline-none font-bold text-gray-800 focus:border-blue-400 text-sm" />
+                          <input value={rep.name || ''} onChange={e => updateReport(idx, {name: e.target.value})} className="w-full p-2.5 bg-white border border-gray-200 rounded-lg outline-none font-bold text-gray-800 focus:border-blue-400 text-sm" />
                         </div>
                         <div>
                           <label className="text-[10px] font-bold text-gray-400 uppercase block mb-1">Mês Ref.</label>
-                          <input type="month" value={rep.month || ''} onChange={e => { const n = [...data]; n[idx].month = e.target.value; setData(n); }} className="w-full p-2.5 bg-white border border-gray-200 rounded-lg outline-none font-bold text-gray-800 focus:border-blue-400 text-sm" />
+                          <input type="month" value={rep.month || ''} onChange={e => updateReport(idx, {month: e.target.value})} className="w-full p-2.5 bg-white border border-gray-200 rounded-lg outline-none font-bold text-gray-800 focus:border-blue-400 text-sm" />
                         </div>
                       </div>
 
-                      <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">1. Métricas Base Manuais</h4>
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
-                        <MetricBox label="Leads" val={rep.leads} onChange={v => { const n = [...data]; n[idx].leads = v; setData(n); }} edit={true} color={config.color} />
-                        <MetricBox label="Custo / Lead" val={`R$ ${rep.cost}`} onChange={v => { const n = [...data]; n[idx].cost = v.replace('R$ ', ''); setData(n); }} edit={true} color={config.color} />
-                        <MetricBox label="Contratos" val={rep.contracts} onChange={v => { const n = [...data]; n[idx].contracts = v; setData(n); }} edit={true} color={config.color} />
-                        {safeArray(rep.custom).map((c, cidx) => (
-                          <div key={cidx} className="relative group">
-                            <MetricBox label={c.label} val={c.value} onChange={v => { const n = [...data]; n[idx].custom[cidx].value = v; setData(n); }} edit={true} color={config.color} />
-                            <button onClick={() => { const n = [...data]; n[idx].custom.splice(cidx, 1); setData(n); }} className="absolute -top-2 -right-2 bg-red-100 text-red-600 rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"><X size={12}/></button>
+                      {rep.type !== 'pdf' ? (
+                        <>
+                          <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">Métricas Base Manuais</h4>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
+                            <MetricBox label="Leads" val={rep.leads} onChange={v => updateReport(idx, {leads: v})} edit={true} color={config.color} />
+                            <MetricBox label="Custo / Lead" val={`R$ ${rep.cost}`} onChange={v => updateReport(idx, {cost: v.replace('R$ ', '')})} edit={true} color={config.color} />
+                            <MetricBox label="Contratos" val={rep.contracts} onChange={v => updateReport(idx, {contracts: v})} edit={true} color={config.color} />
+                            {safeArray(rep.custom).map((c, cidx) => (
+                              <div key={cidx} className="relative group">
+                                <MetricBox label={c.label} val={c.value} onChange={v => { const custom = [...rep.custom]; custom[cidx].value = v; updateReport(idx, {custom}); }} edit={true} color={config.color} />
+                                <button onClick={() => { const custom = [...rep.custom]; custom.splice(cidx, 1); updateReport(idx, {custom}); }} className="absolute -top-2 -right-2 bg-red-100 text-red-600 rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity"><X size={12}/></button>
+                              </div>
+                            ))}
+                            <div className="border-2 border-dashed border-gray-300 p-2 rounded-xl flex items-center justify-center bg-white hover:bg-gray-50 cursor-pointer" onClick={() => { const label = prompt("Métrica (Ex: Investimento):"); if(label) { const custom = [...safeArray(rep.custom), { label, value: '0' }]; updateReport(idx, {custom}); } }}>
+                               <span className="text-xs font-bold text-gray-500">+ Métrica</span>
+                            </div>
                           </div>
-                        ))}
-                        <div className="border-2 border-dashed border-gray-300 p-2 rounded-xl flex items-center justify-center bg-white hover:bg-gray-50 cursor-pointer" onClick={() => { const label = prompt("Métrica (Ex: Investimento):"); if(label) { const n = [...data]; n[idx].custom = safeArray(n[idx].custom); n[idx].custom.push({ label, value: '0' }); setData(n); } }}>
-                           <span className="text-xs font-bold text-gray-500">+ Métrica</span>
+                        </>
+                      ) : (
+                        <div className="space-y-2">
+                          <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1">Link do PDF (Google Drive)</h4>
+                          <input value={rep.attachment || ''} onChange={e => updateReport(idx, {attachment: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none text-sm bg-white shadow-sm focus:border-blue-400" placeholder="Cole o link de visualização ou edição do Google Drive..." />
+                          <p className="text-[10px] font-bold text-blue-600">O sistema converterá automaticamente este link para visualizar o PDF aqui dentro.</p>
                         </div>
-                      </div>
-
-                      <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">2. Anexar PDF do Relatório</h4>
-                      <input value={rep.attachment || ''} onChange={e => { const n = [...data]; n[idx].attachment = e.target.value; setData(n); }} className="w-full p-3 border border-gray-200 rounded-xl outline-none text-sm bg-white shadow-sm focus:border-blue-400" placeholder="Cole o link do PDF hospedado no Google Drive..." />
+                      )}
                     </div>
                   )}
 
                   {/* VISÃO FINAL DO RELATÓRIO (Todos vêem) */}
                   <div className="p-6 bg-white flex flex-col">
-                    <div className="flex flex-col mb-6 gap-3 border-b border-gray-100 pb-4">
+                    <div className="flex flex-col mb-6 gap-1 border-b border-gray-100 pb-4">
                       <h2 className="text-xl font-black leading-tight" style={{ color: config.color }}>{rep.name || 'Fechamento de Performance'}</h2>
+                      <p className="text-sm font-semibold opacity-60">Referência: {rep.month || 'N/A'}</p>
                     </div>
 
-                    {!rep.attachment ? (
-                      <div className="text-center py-10 opacity-40 font-bold text-gray-500 text-sm">
-                        O PDF deste relatório ainda não foi adicionado pela equipe.
+                    {rep.type === 'pdf' ? (
+                      <div className="w-full h-[600px] border border-gray-200 rounded-xl overflow-hidden bg-gray-50 shadow-sm">
+                        {rep.attachment ? (
+                          <iframe src={formatDriveLink(rep.attachment)} className="w-full h-full" frameBorder="0" allowFullScreen title="Relatório PDF"></iframe>
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center font-bold text-gray-400">PDF ainda não inserido pelo Gestor.</div>
+                        )}
                       </div>
                     ) : (
-                      <div className="flex flex-col gap-4">
-                         <div className="flex justify-end">
-                           <a href={rep.attachment} target="_blank" rel="noreferrer" className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-white shadow-sm text-xs w-fit transition-transform hover:scale-105" style={{ backgroundColor: config.secondaryColor }}>
-                             <Download size={14}/> Baixar / Abrir PDF Externo
-                           </a>
-                         </div>
-                         {/* Visualização Embutida do PDF (Iframe) */}
-                         <div className="w-full h-[600px] border border-gray-200 rounded-xl overflow-hidden bg-gray-50 shadow-sm">
-                            <iframe src={formatDriveLink(rep.attachment)} className="w-full h-full" frameBorder="0" allowFullScreen title="Preview do Relatório"></iframe>
-                         </div>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <MetricBox label="Leads" val={rep.leads} color={config.color} />
+                        <MetricBox label="Custo / Lead" val={`R$ ${rep.cost}`} color={config.color} />
+                        <MetricBox label="Contratos" val={rep.contracts} color={config.color} />
+                        {safeArray(rep.custom).map((c, cidx) => (
+                           <MetricBox key={cidx} label={c.label} val={c.value} color={config.color} />
+                        ))}
                       </div>
                     )}
                   </div>
