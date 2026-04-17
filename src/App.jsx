@@ -3,7 +3,7 @@ import {
   LayoutDashboard, KanbanSquare, CalendarDays, TrendingUp, 
   DollarSign, FileText, Settings, LogOut, Plus, X, 
   MessageSquare, Calendar, Link as LinkIcon, Image, 
-  Save, Edit3, Trash2, ChevronDown, ChevronUp, Copy, Download,
+  Bot, Save, Edit3, Trash2, ChevronDown, ChevronUp, Copy, Download,
   BarChart3, FileSearch
 } from 'lucide-react';
 
@@ -24,6 +24,90 @@ const getDisplayRole = (role) => {
   if (role === 'social media') return 'Social Media';
   if (role === 'gestor de tráfego') return 'Gestor de Tráfego';
   return role;
+};
+
+// --- NOVO MOTOR DA IA (COM RETRY E FALLBACK) ---
+// 1. Função utilitária para lidar com falhas de rede (tenta até 5 vezes)
+const fetchWithRetry = async (url, options, retries = 5) => {
+  const delays = [1000, 2000, 4000, 8000, 16000];
+  for (let i = 0; i < retries; i++) {
+    try {
+      const response = await fetch(url, options);
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("Erro detalhado da API do Gemini:", errorText);
+        throw new Error(`Erro na API: ${response.status} - ${errorText}`);
+      }
+      return await response.json();
+    } catch (error) {
+      if (i === retries - 1) throw error;
+      await new Promise(res => setTimeout(res, delays[i]));
+    }
+  }
+};
+
+// 2. O Motor Principal: Descobre o modelo autorizado da chave e faz a requisição
+const callGeminiWithFallback = async (userPrompt, systemPrompt, userApiKey) => {
+  if (!userApiKey) throw new Error("Chave da API do Google Gemini não está configurada.");
+  const cleanKey = userApiKey.trim();
+  
+  // Passo A: Consultar a API do Google para listar quais modelos ESTA CHAVE pode usar
+  const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${cleanKey}`;
+  let modelName = "";
+
+  try {
+    const listData = await fetchWithRetry(listUrl, { method: 'GET' });
+    
+    // Filtra apenas modelos da família Gemini que suportam geração de texto
+    const validModels = (listData.models || []).filter(m => 
+      m.supportedGenerationMethods?.includes('generateContent') &&
+      m.name.includes('gemini')
+    );
+
+    if (validModels.length === 0) {
+       throw new Error("A sua chave é válida, mas o Google informa que ela não tem permissão para usar nenhum modelo Gemini.");
+    }
+
+    // Escolhe o melhor e mais atual modelo disponível na conta do usuário
+    const preferredModel = 
+      validModels.find(m => m.name.includes('1.5-flash')) ||
+      validModels.find(m => m.name.includes('1.5-pro')) ||
+      validModels.find(m => m.name.includes('2.5-flash')) ||
+      validModels.find(m => m.name.includes('1.0-pro') || m.name === 'models/gemini-pro') ||
+      validModels[0];
+
+    // Salva o nome exato autorizado pelo Google (ex: "models/gemini-1.5-flash")
+    modelName = preferredModel.name; 
+    console.log("Sucesso! Modelo autorizado selecionado automaticamente:", modelName);
+
+  } catch (err) {
+    throw new Error(`Falha ao validar a chave API no Google: ${err.message}`);
+  }
+
+  // Passo B: Fazer a requisição para gerar o texto usando o modelo GARANTIDO
+  const url = `https://generativelanguage.googleapis.com/v1beta/${modelName}:generateContent?key=${cleanKey}`;
+  
+  let payload = {};
+  
+  // Modelos antigos (1.0) não suportam systemInstruction nativamente, então adaptamos
+  if (modelName === 'models/gemini-pro' || modelName === 'models/gemini-1.0-pro') {
+      payload = {
+          contents: [{ parts: [{ text: `[INSTRUÇÕES DO SISTEMA]:\n${systemPrompt}\n\n[PEDIDO DO USUÁRIO]:\n${userPrompt}` }] }]
+      };
+  } else {
+      payload = {
+          contents: [{ parts: [{ text: userPrompt }] }],
+          systemInstruction: { parts: [{ text: systemPrompt }] }
+      };
+  }
+
+  const data = await fetchWithRetry(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || "Erro: Resposta vazia da IA.";
 };
 
 // --- DADOS PADRÃO ---
@@ -57,6 +141,7 @@ const defaultConfig = {
   secondaryColor: '#991B1B', 
   bgColor: '#F3F4F6', 
   textColor: '#1F2937',
+  geminiKey: '',
   lookerStudioUrl: 'https://lookerstudio.google.com/reporting/10b2cbf5-4b1f-4f87-a96a-855d8067c523/page/4E6KF'
 };
 
@@ -320,8 +405,28 @@ function KanbanView({ data, setData, user, config, showToast, openCardId, setOpe
 function CardModal({ card, user, config, onClose, onSave, showToast }) {
   const [draft, setDraft] = useState({ ...card, comments: safeArray(card.comments), carousel: safeArray(card.carousel) });
   const [commentText, setCommentText] = useState('');
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiPrompt, setAiPrompt] = useState('');
 
   const canEditCore = ['master', 'social media', 'gestor de tráfego'].includes(user.role);
+
+  const handleAI = async () => {
+    setAiLoading(true);
+    try {
+      const prompt = `Título do Post: ${draft.title}. Descrição: ${draft.desc}. Detalhes extras: ${aiPrompt}`;
+      const systemInstruction = "Você atua como especialista em marketing e copywriter. Crie uma legenda chamativa para redes sociais, focada em conversão, com um bom CTA e hashtags estratégicas.";
+      
+      const textoGerado = await callGeminiWithFallback(prompt, systemInstruction, config.geminiKey);
+      
+      setDraft({ ...draft, caption: textoGerado });
+      showToast(`Legenda gerada com sucesso pela IA!`);
+    } catch (e) {
+      showToast(e.message);
+    } finally {
+      setAiLoading(false);
+      setAiPrompt('');
+    }
+  };
 
   return (
     <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
@@ -385,7 +490,17 @@ function CardModal({ card, user, config, onClose, onSave, showToast }) {
           <div className="space-y-5 flex flex-col">
             <div className="flex-1 flex flex-col">
               <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Legenda (Copy)</label>
-              <textarea value={draft.caption} onChange={e => setDraft({...draft, caption: e.target.value})} className="w-full p-4 border border-gray-200 rounded-xl outline-none focus:border-blue-500 flex-1 min-h-[150px] resize-none bg-gray-50/50 leading-relaxed text-gray-700 custom-scrollbar" placeholder="Escreva a legenda..." />
+              <textarea value={draft.caption} onChange={e => setDraft({...draft, caption: e.target.value})} className="w-full p-4 border border-gray-200 rounded-xl outline-none focus:border-blue-500 flex-1 min-h-[150px] resize-none mb-3 bg-gray-50/50 leading-relaxed text-gray-700 custom-scrollbar" placeholder="Escreva a legenda ou gere com IA..." />
+              
+              {canEditCore && (
+                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 p-4 rounded-2xl">
+                  <p className="text-xs font-black text-blue-800 mb-3 flex items-center gap-1.5 uppercase tracking-wider"><Bot size={16}/> Gerador Automático de Legenda (IA)</p>
+                  <input placeholder="Ex: Focar na dor do cliente, tom descontraído..." value={aiPrompt} onChange={e => setAiPrompt(e.target.value)} className="w-full text-sm p-3 border border-white/60 rounded-xl outline-none mb-3 bg-white/80 shadow-inner focus:border-blue-300" />
+                  <button onClick={handleAI} disabled={aiLoading} className="w-full bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold py-3 rounded-xl flex items-center justify-center gap-2 disabled:opacity-50 transition-colors shadow-md">
+                    {aiLoading ? <span className="animate-pulse">Gerando Legenda com IA...</span> : 'Criar Legenda Incrível'}
+                  </button>
+                </div>
+              )}
             </div>
 
             <div className="border-t border-gray-100 pt-5">
@@ -470,7 +585,7 @@ function CalendarView({ data, config, onOpenCard }) {
 function TrafficView({ data, setData, user, config, showToast }) {
   const isClient = user.role === 'empresa';
   const isAdmin = ['master', 'gestor de tráfego'].includes(user.role);
-  const [activeTab, setActiveTab] = useState('dataStudio'); // 'dataStudio', 'reports'
+  const [activeTab, setActiveTab] = useState('dataStudio'); 
   const [expandedId, setExpandedId] = useState(null);
 
   const getEmbedUrl = (url) => {
@@ -608,7 +723,7 @@ function TrafficView({ data, setData, user, config, showToast }) {
                         </div>
                       </div>
 
-                      <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">2. Relatório Personalizado (PDF do Google Drive)</h4>
+                      <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">2. Anexar PDF do Relatório</h4>
                       <input value={rep.attachment || ''} onChange={e => { const n = [...data]; n[idx].attachment = e.target.value; setData(n); }} className="w-full p-3 border border-gray-200 rounded-xl outline-none text-sm bg-white shadow-sm focus:border-blue-400" placeholder="Cole o link do PDF hospedado no Google Drive..." />
                     </div>
                   )}
@@ -621,7 +736,7 @@ function TrafficView({ data, setData, user, config, showToast }) {
 
                     {!rep.attachment ? (
                       <div className="text-center py-10 opacity-40 font-bold text-gray-500 text-sm">
-                        O PDF deste relatório ainda não foi adicionado.
+                        O PDF deste relatório ainda não foi adicionado pela equipe.
                       </div>
                     ) : (
                       <div className="flex flex-col gap-4">
@@ -827,6 +942,21 @@ function DocsView({ data, setData, user, config }) {
 
 function SettingsView({ config, setConfig, users, setUsers, showToast }) {
   const [newUser, setNewUser] = useState({ login: '', pass: '', role: 'empresa', name: '' });
+  const [testingApi, setTestingApi] = useState(false);
+
+  const handleTestApi = async () => {
+    if (!config.geminiKey) return showToast("Insira a chave da API antes de testar.");
+    setTestingApi(true);
+    try {
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${config.geminiKey}`);
+      if (res.ok) showToast(`✅ Chave API validada e pronta para uso!`);
+      else throw new Error("Chave inválida.");
+    } catch (err) {
+      showToast(`❌ Erro na chave: ${err.message}`);
+    } finally {
+      setTestingApi(false);
+    }
+  };
 
   const HexInput = ({ label, value, onChange }) => (
     <div>
@@ -870,12 +1000,22 @@ function SettingsView({ config, setConfig, users, setUsers, showToast }) {
       </div>
 
       <div className="bg-white/80 backdrop-blur-md p-8 rounded-3xl shadow-sm border border-gray-200/50 space-y-6">
-        <h2 className="text-xl font-black border-b border-gray-100 pb-3 flex items-center gap-2">🔗 Dashboard (Data Studio)</h2>
+        <h2 className="text-xl font-black border-b border-gray-100 pb-3 flex items-center gap-2">🔗 Motores Externos (Data Studio & IA)</h2>
         <div className="space-y-5">
           <div>
             <label className="text-xs font-bold opacity-60 uppercase tracking-wider block mb-1">Dashboard Embed URL (Data Studio)</label>
             <input value={config.lookerStudioUrl || ''} onChange={e => setConfig({...config, lookerStudioUrl: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none text-sm bg-gray-50 focus:bg-white focus:border-blue-400 font-medium" placeholder="Cole o link do seu relatório Data Studio aqui..." />
             <p className="text-[10px] font-bold text-blue-600 mt-1 uppercase tracking-wide">Cole o link padrão e o sistema converterá em Embed Automaticamente.</p>
+          </div>
+          <div>
+            <label className="text-xs font-bold opacity-60 uppercase tracking-wider block mb-1">Google AI Studio Key (Gemini API para a Esteira)</label>
+            <div className="flex gap-2">
+              <input type="password" value={config.geminiKey || ''} onChange={e => setConfig({...config, geminiKey: e.target.value})} className="flex-1 p-3 border border-gray-200 rounded-xl outline-none bg-gray-50 focus:bg-white focus:border-blue-400 font-mono" placeholder="AIzaSy..." />
+              <button onClick={handleTestApi} disabled={testingApi} className="bg-gray-800 text-white px-5 rounded-xl font-bold shadow-md hover:bg-black transition-colors disabled:opacity-50">
+                {testingApi ? 'Testando...' : 'Verificar API'}
+              </button>
+            </div>
+            <p className="text-[10px] text-gray-500 mt-2">Usado para gerar as legendas e copy dos posts na Esteira.</p>
           </div>
         </div>
       </div>
