@@ -414,7 +414,15 @@ function CardModal({ card, user, config, onClose, onSave, showToast }) {
     setAiLoading(true);
     try {
       const prompt = `Título do Post: ${draft.title}. Descrição: ${draft.desc}. Detalhes extras: ${aiPrompt}`;
-      const systemInstruction = "Você atua como especialista em marketing e copywriter. Crie uma legenda chamativa para redes sociais, focada em conversão, com um bom CTA e hashtags estratégicas.";
+      
+      // REGRA ESTREITA PARA O PROMPT: Zero conversação, apenas o texto final.
+      const systemInstruction = `Você é um redator e copywriter sênior especialista em conversão. 
+REGRA ABSOLUTA: Sua resposta deve conter EXCLUSIVAMENTE a legenda final pronta para uso.
+NÃO use introduções como "Aqui está a legenda", "Excelente!", "Vamos lá".
+NÃO use saudações.
+NÃO faça perguntas no final.
+Forneça apenas UMA opção de legenda focada em conversão, com um bom CTA e hashtags estratégicas no final.
+Apenas devolva o texto puro da legenda.`;
       
       const textoGerado = await callGeminiWithFallback(prompt, systemInstruction, config.geminiKey);
       
@@ -484,6 +492,19 @@ function CardModal({ card, user, config, onClose, onSave, showToast }) {
                   )}
                 </div>
               )}
+              
+              {/* --- PREVIEWS DO GOOGLE DRIVE --- */}
+              <div className="mt-4 flex flex-col gap-4">
+                {!draft.isCarousel && draft.link && draft.link.includes('drive.google.com') && (
+                  <iframe src={formatDriveLink(draft.link)} className="w-full h-72 border border-gray-200 rounded-xl bg-gray-50 shadow-sm" title="Preview"></iframe>
+                )}
+                {draft.isCarousel && draft.carousel.map((link, idx) => link && link.includes('drive.google.com') && (
+                  <div key={idx} className="flex flex-col gap-1">
+                    <span className="text-xs font-bold text-gray-400 uppercase">Preview {idx + 1}</span>
+                    <iframe src={formatDriveLink(link)} className="w-full h-72 border border-gray-200 rounded-xl bg-gray-50 shadow-sm" title={`Preview ${idx + 1}`}></iframe>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -636,12 +657,9 @@ function TrafficView({ data, setData, user, config, showToast }) {
         <div className="flex-1 bg-white rounded-3xl shadow-sm border border-gray-200/50 overflow-hidden flex flex-col min-h-[600px] relative">
           {config.lookerStudioUrl ? (
             <>
-              {/* Barra Superior do Iframe com a Opção de Baixar */}
+              {/* Barra Superior do Iframe */}
               <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
                 <h3 className="font-bold text-gray-700 flex items-center gap-2"><BarChart3 size={18}/> Visualização Interativa</h3>
-                <a href={config.lookerStudioUrl} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-sm bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold transition-colors shadow-sm">
-                   <Download size={16}/> Abrir para Baixar PDF
-                </a>
               </div>
               <iframe src={getEmbedUrl(config.lookerStudioUrl)} frameBorder="0" style={{ border: 0 }} allowFullScreen className="w-full flex-1 h-full min-h-[700px]"></iframe>
             </>
