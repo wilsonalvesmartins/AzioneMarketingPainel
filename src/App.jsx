@@ -3,13 +3,19 @@ import {
   LayoutDashboard, KanbanSquare, CalendarDays, TrendingUp, 
   DollarSign, FileText, Settings, LogOut, Plus, X, 
   MessageSquare, Calendar, Link as LinkIcon, Image, 
-  Bot, Save, Edit3, Trash2, ChevronDown, ChevronUp, Copy, Download,
-  BarChart3, BrainCircuit, FileSearch
+  Save, Edit3, Trash2, ChevronDown, ChevronUp, Copy, Download,
+  BarChart3, FileSearch
 } from 'lucide-react';
 
 // --- FUNÇÕES DE SEGURANÇA MÁXIMA PARA EVITAR TELA BRANCA (CRASH) ---
 const safeArray = (arr) => Array.isArray(arr) ? arr : [];
 const safeObject = (obj) => (typeof obj === 'object' && obj !== null && !Array.isArray(obj)) ? obj : {};
+
+// Formata links do Google Drive para modo de visualização (Embed)
+const formatDriveLink = (url) => {
+  if (typeof url !== 'string' || !url) return '';
+  return url.replace(/\/view.*$/, '/preview').replace(/\/edit.*$/, '/preview');
+};
 
 // --- FUNÇÃO AUXILIAR DE NOMENCLATURA DE CARGOS ---
 const getDisplayRole = (role) => {
@@ -38,7 +44,7 @@ const defaultFinances = [
 
 const defaultReports = [{ 
   id: 1, name: 'Fechamento de Performance', month: '2026-03', date: new Date().toISOString().split('T')[0], 
-  leads: 150, cost: '5.50', contracts: 10, attachment: '', aiAnalysis: '', observations: '', 
+  leads: 150, cost: '5.50', contracts: 10, attachment: '', 
   custom: [{ label: 'Alcance Total', value: '45.000' }] 
 }];
 
@@ -51,7 +57,6 @@ const defaultConfig = {
   secondaryColor: '#991B1B', 
   bgColor: '#F3F4F6', 
   textColor: '#1F2937',
-  geminiKey: '',
   lookerStudioUrl: 'https://lookerstudio.google.com/reporting/10b2cbf5-4b1f-4f87-a96a-855d8067c523/page/4E6KF'
 };
 
@@ -111,39 +116,6 @@ function usePersistentState(key, initialValue) {
 
   return [state, setPersistentState, isLoaded];
 }
-
-// --- FUNÇÃO GLOBAL DE CHAMADA DO GEMINI (ROBUSTA À FORÇA BRUTA) ---
-const callGeminiAPI = async (prompt, systemInstruction, config, showToast) => {
-  if (!config.geminiKey) throw new Error("Chave API do Gemini não configurada.");
-  
-  // Hardcoded fallback list: Se um estiver congestionado (503) pula pro próximo
-  const modelsToTry = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro'];
-  let lastError = '';
-
-  const finalPrompt = `[INSTRUÇÕES DA PERSONA E DO SISTEMA]:\n${systemInstruction}\n\n[TAREFA DO USUÁRIO]:\n${prompt}`;
-
-  for (const model of modelsToTry) {
-    try {
-      const payload = { contents: [{ parts: [{ text: finalPrompt }] }] };
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${config.geminiKey}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-      });
-      
-      const result = await res.json();
-      if (!res.ok) throw new Error(result.error?.message || `Erro HTTP ${res.status}`);
-      
-      const text = result.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (text) return { text, model };
-      
-      throw new Error("Resposta vazia da IA.");
-    } catch (e) {
-      lastError = e.message;
-      console.warn(`Tentativa com ${model} falhou:`, e.message);
-      // Continua pro próximo do loop silenciosamente
-    }
-  }
-  throw new Error(`Falha após tentar múltiplos modelos. Último erro: ${lastError}`);
-};
 
 // --- COMPONENTES DE UI ---
 const Toast = ({ msg, onClose }) => {
@@ -249,7 +221,7 @@ export default function App() {
       </aside>
 
       <main className="flex-1 p-4 md:p-8 overflow-y-auto w-full max-w-[100vw] flex flex-col relative" style={{ color: safeConf.textColor }}>
-        <div className="flex-1 w-full" style={view !== 'traffic' ? { maxWidth: '80rem', margin: '0 auto' } : {}}>
+        <div className="flex-1 w-full max-w-7xl mx-auto">
           {view === 'kanban' && <KanbanView data={safeArray(kanban)} setData={setKanban} user={user} config={safeConf} showToast={showToast} openCardId={openCardId} setOpenCardId={setOpenCardId} />}
           {view === 'calendar' && <CalendarView data={safeArray(kanban)} config={safeConf} onOpenCard={(id) => { setView('kanban'); setOpenCardId(id); }} />}
           {view === 'traffic' && <TrafficView data={safeArray(reports)} setData={setReports} user={user} config={safeConf} showToast={showToast} />}
@@ -348,27 +320,8 @@ function KanbanView({ data, setData, user, config, showToast, openCardId, setOpe
 function CardModal({ card, user, config, onClose, onSave, showToast }) {
   const [draft, setDraft] = useState({ ...card, comments: safeArray(card.comments), carousel: safeArray(card.carousel) });
   const [commentText, setCommentText] = useState('');
-  const [aiLoading, setAiLoading] = useState(false);
-  const [aiPrompt, setAiPrompt] = useState('');
 
   const canEditCore = ['master', 'social media', 'gestor de tráfego'].includes(user.role);
-  
-  const handleAI = async () => {
-    setAiLoading(true);
-    try {
-      const prompt = `Título do Post: ${draft.title}. Descrição: ${draft.desc}. Detalhes extras: ${aiPrompt}`;
-      const systemInstruction = "Você atua como especialista em marketing e copywriter. Crie uma legenda chamativa para redes sociais, focada em conversão, com um bom CTA e hashtags estratégicas.";
-      const { text, model } = await callGeminiAPI(prompt, systemInstruction, config, showToast);
-      
-      setDraft({ ...draft, caption: text });
-      showToast(`Legenda gerada com sucesso (${model})!`);
-    } catch (e) {
-      showToast(e.message);
-    } finally {
-      setAiLoading(false);
-      setAiPrompt('');
-    }
-  };
 
   return (
     <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
@@ -432,17 +385,7 @@ function CardModal({ card, user, config, onClose, onSave, showToast }) {
           <div className="space-y-5 flex flex-col">
             <div className="flex-1 flex flex-col">
               <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Legenda (Copy)</label>
-              <textarea value={draft.caption} onChange={e => setDraft({...draft, caption: e.target.value})} className="w-full p-4 border border-gray-200 rounded-xl outline-none focus:border-blue-500 flex-1 min-h-[150px] resize-none mb-3 bg-gray-50/50 leading-relaxed text-gray-700 custom-scrollbar" placeholder="Escreva a legenda ou gere com IA..." />
-              
-              {canEditCore && (
-                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 p-4 rounded-2xl">
-                  <p className="text-xs font-black text-blue-800 mb-3 flex items-center gap-1.5 uppercase tracking-wider"><Bot size={16}/> Gerador Automático de Legenda (IA)</p>
-                  <input placeholder="Ex: Focar na dor do cliente, tom descontraído..." value={aiPrompt} onChange={e => setAiPrompt(e.target.value)} className="w-full text-sm p-3 border border-white/60 rounded-xl outline-none mb-3 bg-white/80 shadow-inner focus:border-blue-300" />
-                  <button onClick={handleAI} disabled={aiLoading} className="w-full bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold py-3 rounded-xl flex items-center justify-center gap-2 disabled:opacity-50 transition-colors shadow-md">
-                    {aiLoading ? <span className="animate-pulse">Criando magia...</span> : 'Gerar Super Legenda'}
-                  </button>
-                </div>
-              )}
+              <textarea value={draft.caption} onChange={e => setDraft({...draft, caption: e.target.value})} className="w-full p-4 border border-gray-200 rounded-xl outline-none focus:border-blue-500 flex-1 min-h-[150px] resize-none bg-gray-50/50 leading-relaxed text-gray-700 custom-scrollbar" placeholder="Escreva a legenda..." />
             </div>
 
             <div className="border-t border-gray-100 pt-5">
@@ -527,8 +470,8 @@ function CalendarView({ data, config, onOpenCard }) {
 function TrafficView({ data, setData, user, config, showToast }) {
   const isClient = user.role === 'empresa';
   const isAdmin = ['master', 'gestor de tráfego'].includes(user.role);
+  const [activeTab, setActiveTab] = useState('dataStudio'); // 'dataStudio', 'reports'
   const [expandedId, setExpandedId] = useState(null);
-  const [aiLoadingId, setAiLoadingId] = useState(null);
 
   const getEmbedUrl = (url) => {
     if(!url) return '';
@@ -543,7 +486,7 @@ function TrafficView({ data, setData, user, config, showToast }) {
       month: new Date().toISOString().slice(0, 7), 
       date: new Date().toISOString().split('T')[0], 
       leads: 0, cost: '0', contracts: 0, 
-      attachment: '', aiAnalysis: '', observations: '', custom: [] 
+      attachment: '', custom: [] 
     };
     setData([newRep, ...data]);
     setExpandedId(newRep.id);
@@ -556,45 +499,37 @@ function TrafficView({ data, setData, user, config, showToast }) {
     }
   };
 
-  const generateAIForReport = async (reportId) => {
-    setAiLoadingId(reportId);
-    try {
-      const rep = data.find(r => r.id === reportId);
-      const customMetrics = safeArray(rep.custom).map(c => `${c.label}: ${c.value}`).join(', ');
-      const metricsText = `Leads Gerados: ${rep.leads}, Custo Médio por Lead (CPL): R$ ${rep.cost}, Contratos Fechados: ${rep.contracts}. ${customMetrics}`;
-      
-      const prompt = `Atuando de forma profissional como a agência ${config.companyName}, redija uma análise de performance executiva para nosso cliente referente ao período de ${rep.month || 'deste mês'}. Analise os seguintes dados do Data Studio: ${metricsText}. Divida o texto usando headers markdown (##) nestas seções: "Resumo Executivo do Período", "Análise de Eficiência (Custos x Leads)", "Próximos Passos e Recomendações". Não mencione que você é uma IA.`;
-      const sysInst = "Você é um Analista Senior de Performance. Produza um relatório claro, profissional e focado em interpretar dados reais em português do Brasil.";
-
-      const { text, model } = await callGeminiAPI(prompt, sysInst, config, showToast);
-      setData(data.map(d => d.id === reportId ? { ...d, aiAnalysis: text } : d));
-      showToast(`Análise gerada com sucesso! (${model})`);
-    } catch (e) {
-      showToast(e.message);
-    } finally {
-      setAiLoadingId(null);
-    }
-  };
-
   return (
-    <div className="w-full flex flex-col h-full max-w-[1400px] mx-auto">
-      <div className="mb-6">
-        <h1 className="text-3xl font-black">Dados de Tráfego</h1>
-        <p className="text-sm font-medium opacity-70 mt-1">Dashboard Data Studio e Relatórios de Performance.</p>
+    <div className="w-full flex flex-col h-full max-w-[1200px] mx-auto">
+      <div className="flex flex-col md:flex-row md:justify-between md:items-end mb-8 gap-4">
+        <div>
+          <h1 className="text-3xl font-black">Dados de Tráfego</h1>
+          <p className="text-sm font-medium opacity-70 mt-1">Dashboard Data Studio e Relatórios de Performance.</p>
+        </div>
+        
+        <div className="flex bg-gray-200/50 p-1 rounded-xl w-fit">
+          <button onClick={() => setActiveTab('dataStudio')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'dataStudio' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}>
+            <BarChart3 size={16}/> Dashboard Data Studio
+          </button>
+          <button onClick={() => setActiveTab('reports')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'reports' ? 'bg-white shadow-sm text-green-600' : 'text-gray-500 hover:text-gray-800'}`}>
+            <FileSearch size={16}/> {isClient ? 'Relatórios Mensais' : 'Gerenciar Relatórios'}
+          </button>
+        </div>
       </div>
 
-      {/* LAYOUT TELA DIVIDIDA (SPLIT SCREEN) NO DESKTOP */}
-      <div className="flex flex-col lg:flex-row gap-6 items-stretch min-h-[800px] h-[calc(100vh-14rem)]">
-        
-        {/* Lado Esquerdo: DATA STUDIO (Fixo) */}
-        <div className="w-full lg:w-7/12 bg-white rounded-3xl shadow-sm border border-gray-200/50 flex flex-col overflow-hidden h-full">
+      {activeTab === 'dataStudio' && (
+        <div className="flex-1 bg-white rounded-3xl shadow-sm border border-gray-200/50 overflow-hidden flex flex-col min-h-[600px] relative">
           {config.lookerStudioUrl ? (
-            <div className="flex-1 flex flex-col h-full">
-              <div className="bg-yellow-50 p-2 text-center text-xs font-bold text-yellow-700 border-b border-yellow-200 flex-shrink-0">
-                ⚠️ Dica: No Data Studio vá em Editar &gt; Arquivo &gt; Incorporar Relatório &gt; Ativar Incorporação.
+            <>
+              {/* Barra Superior do Iframe com a Opção de Baixar */}
+              <div className="p-4 border-b border-gray-100 flex justify-between items-center bg-gray-50">
+                <h3 className="font-bold text-gray-700 flex items-center gap-2"><BarChart3 size={18}/> Visualização Interativa</h3>
+                <a href={config.lookerStudioUrl} target="_blank" rel="noreferrer" className="flex items-center gap-2 text-sm bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold transition-colors shadow-sm">
+                   <Download size={16}/> Abrir para Baixar PDF
+                </a>
               </div>
-              <iframe src={getEmbedUrl(config.lookerStudioUrl)} frameBorder="0" style={{ border: 0 }} allowFullScreen className="w-full flex-1 min-h-[500px]"></iframe>
-            </div>
+              <iframe src={getEmbedUrl(config.lookerStudioUrl)} frameBorder="0" style={{ border: 0 }} allowFullScreen className="w-full flex-1 h-full min-h-[700px]"></iframe>
+            </>
           ) : (
             <div className="flex flex-col items-center justify-center h-full flex-1 p-12 text-center opacity-60">
               <BarChart3 size={64} className="mb-4" />
@@ -603,21 +538,21 @@ function TrafficView({ data, setData, user, config, showToast }) {
             </div>
           )}
         </div>
+      )}
 
-        {/* Lado Direito: RELATÓRIOS E IA (Rolável) */}
-        <div className="w-full lg:w-5/12 flex flex-col space-y-4 overflow-y-auto pr-2 custom-scrollbar h-full pb-10">
-          
+      {activeTab === 'reports' && (
+        <div className="w-full max-w-4xl mx-auto space-y-4 pb-10">
           {isAdmin && (
-            <div className="flex justify-between items-center bg-blue-50 border border-blue-100 p-4 rounded-2xl flex-shrink-0">
-              <p className="text-sm font-semibold text-blue-800 leading-tight">Analise o dashboard ao lado e crie um novo fechamento com IA.</p>
+            <div className="flex justify-between items-center bg-blue-50 border border-blue-100 p-4 rounded-2xl flex-shrink-0 mb-4">
+              <p className="text-sm font-semibold text-blue-800 leading-tight">Cadastre e envie os PDFs dos relatórios do período para o cliente.</p>
               <button onClick={addReport} className="flex items-center gap-2 text-white px-4 py-2 rounded-xl shadow-lg font-bold transition-transform hover:scale-105 flex-shrink-0" style={{ backgroundColor: config.color }}>
-                <Plus size={16} /> Relatório
+                <Plus size={16} /> Novo Relatório
               </button>
             </div>
           )}
           
           {data.length === 0 && (
-             <div className="text-center py-10 bg-white/50 rounded-2xl border border-gray-200 font-bold text-gray-400">Nenhum relatório cadastrado.</div>
+             <div className="text-center py-10 bg-white/50 rounded-2xl border border-gray-200 font-bold text-gray-400">Nenhum relatório cadastrado no momento.</div>
           )}
 
           {data.map((rep, idx) => (
@@ -626,8 +561,8 @@ function TrafficView({ data, setData, user, config, showToast }) {
                 <div className="flex items-center gap-4 truncate">
                   <div className="w-12 h-12 rounded-xl flex items-center justify-center shadow-inner flex-shrink-0" style={{ backgroundColor: `${config.secondaryColor}20`, color: config.secondaryColor }}><TrendingUp size={20}/></div>
                   <div className="truncate">
-                    <h3 className="font-black text-lg text-gray-800 truncate">{rep.name || 'Sem nome'}</h3>
-                    <p className="text-xs font-bold opacity-60 mt-0.5">Ref: {rep.month || 'N/A'}</p>
+                    <h3 className="font-black text-lg text-gray-800 truncate">{rep.name || 'Relatório de Performance'}</h3>
+                    <p className="text-xs font-bold opacity-60 mt-0.5">Mês de Referência: {rep.month || 'N/A'}</p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 flex-shrink-0">
@@ -642,6 +577,8 @@ function TrafficView({ data, setData, user, config, showToast }) {
 
               {expandedId === rep.id && (
                 <div className="border-t border-gray-100">
+                  
+                  {/* Edição Admin */}
                   {isAdmin && (
                     <div className="p-5 bg-gray-50/80 border-b border-gray-200/50">
                       <div className="grid grid-cols-2 gap-3 mb-5">
@@ -655,8 +592,8 @@ function TrafficView({ data, setData, user, config, showToast }) {
                         </div>
                       </div>
 
-                      <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">1. Métricas Base</h4>
-                      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-5">
+                      <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">1. Métricas Base Manuais</h4>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
                         <MetricBox label="Leads" val={rep.leads} onChange={v => { const n = [...data]; n[idx].leads = v; setData(n); }} edit={true} color={config.color} />
                         <MetricBox label="Custo / Lead" val={`R$ ${rep.cost}`} onChange={v => { const n = [...data]; n[idx].cost = v.replace('R$ ', ''); setData(n); }} edit={true} color={config.color} />
                         <MetricBox label="Contratos" val={rep.contracts} onChange={v => { const n = [...data]; n[idx].contracts = v; setData(n); }} edit={true} color={config.color} />
@@ -671,60 +608,32 @@ function TrafficView({ data, setData, user, config, showToast }) {
                         </div>
                       </div>
 
-                      <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">2. Análise (IA / Manual)</h4>
-                      <textarea 
-                        value={rep.aiAnalysis || ''} 
-                        onChange={e => { const n = [...data]; n[idx].aiAnalysis = e.target.value; setData(n); }} 
-                        className="w-full p-4 border border-purple-200 rounded-xl outline-none focus:border-purple-400 min-h-[200px] text-sm text-gray-800 bg-purple-50/30 leading-relaxed shadow-inner resize-none mb-3 custom-scrollbar"
-                      />
-                      <button 
-                        onClick={() => generateAIForReport(rep.id)} 
-                        disabled={aiLoadingId === rep.id} 
-                        className="w-full bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-bold py-3 rounded-xl shadow-sm transition-transform hover:scale-[1.01] flex items-center justify-center gap-2 disabled:opacity-70 text-sm mb-5"
-                      >
-                        {aiLoadingId === rep.id ? <span className="animate-pulse">A IA está redigindo...</span> : <><BrainCircuit size={16}/> Gerar Texto IA (Lendo Métricas Acima)</>}
-                      </button>
-
-                      <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">3. Observações Extras</h4>
-                      <textarea value={rep.observations || ''} onChange={e => { const n = [...data]; n[idx].observations = e.target.value; setData(n); }} className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:border-blue-400 min-h-[80px] text-sm text-gray-700 bg-white mb-5 resize-none" />
-
-                      <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">4. Link PDF Completo</h4>
-                      <input value={rep.attachment || ''} onChange={e => { const n = [...data]; n[idx].attachment = e.target.value; setData(n); }} className="w-full p-2.5 border border-gray-200 rounded-xl outline-none text-sm bg-white" placeholder="Link do Google Drive..." />
+                      <h4 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3">2. Relatório Personalizado (PDF do Google Drive)</h4>
+                      <input value={rep.attachment || ''} onChange={e => { const n = [...data]; n[idx].attachment = e.target.value; setData(n); }} className="w-full p-3 border border-gray-200 rounded-xl outline-none text-sm bg-white shadow-sm focus:border-blue-400" placeholder="Cole o link do PDF hospedado no Google Drive..." />
                     </div>
                   )}
 
-                  {/* VISÃO DO CLIENTE / FINAL */}
-                  <div className="p-6 bg-white">
+                  {/* VISÃO FINAL DO RELATÓRIO (Todos vêem) */}
+                  <div className="p-6 bg-white flex flex-col">
                     <div className="flex flex-col mb-6 gap-3 border-b border-gray-100 pb-4">
-                      <h2 className="text-xl font-black leading-tight" style={{ color: config.color }}>{rep.name || 'Análise Executiva'}</h2>
-                      {rep.attachment && (
-                        <a href={rep.attachment} target="_blank" rel="noreferrer" className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-white shadow-sm text-xs w-fit transition-transform hover:scale-105" style={{ backgroundColor: config.secondaryColor }}>
-                          <Download size={14}/> Baixar PDF
-                        </a>
-                      )}
+                      <h2 className="text-xl font-black leading-tight" style={{ color: config.color }}>{rep.name || 'Fechamento de Performance'}</h2>
                     </div>
 
-                    {(!rep.aiAnalysis && !rep.observations) ? (
-                      <div className="text-center py-6 opacity-40 font-bold text-gray-500 text-sm">Este relatório está sendo redigido.</div>
+                    {!rep.attachment ? (
+                      <div className="text-center py-10 opacity-40 font-bold text-gray-500 text-sm">
+                        O PDF deste relatório ainda não foi adicionado.
+                      </div>
                     ) : (
-                      <div className="space-y-6">
-                        {rep.aiAnalysis && (
-                          <div className="prose prose-sm max-w-none text-gray-700">
-                            {rep.aiAnalysis.split('\n').map((line, i) => {
-                              if(line.startsWith('##')) return <h3 key={i} className="text-lg font-black mt-6 mb-3 text-gray-800 border-l-4 pl-2" style={{ borderLeftColor: config.color }}>{line.replace(/#/g, '')}</h3>;
-                              if(line.startsWith('#')) return <h2 key={i} className="text-xl font-black mt-6 mb-3 text-gray-900">{line.replace(/#/g, '')}</h2>;
-                              if(line.startsWith('* ') || line.startsWith('- ')) return <li key={i} className="ml-4 mb-1">{line.substring(2).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')}</li>;
-                              if(!line.trim()) return <br key={i}/>;
-                              return <p key={i} className="mb-3 leading-relaxed" dangerouslySetInnerHTML={{__html: line.replace(/\*\*(.*?)\*\*/g, '<strong class="text-gray-900">$1</strong>')}}></p>;
-                            })}
-                          </div>
-                        )}
-                        {rep.observations && (
-                          <div className="bg-yellow-50 border border-yellow-100 p-4 rounded-xl">
-                            <h4 className="text-xs font-black text-yellow-800 uppercase tracking-widest mb-2 flex items-center gap-1.5"><FileText size={14}/> Observações</h4>
-                            <p className="text-yellow-900 whitespace-pre-wrap leading-relaxed text-xs">{rep.observations}</p>
-                          </div>
-                        )}
+                      <div className="flex flex-col gap-4">
+                         <div className="flex justify-end">
+                           <a href={rep.attachment} target="_blank" rel="noreferrer" className="flex items-center gap-2 px-4 py-2 rounded-lg font-bold text-white shadow-sm text-xs w-fit transition-transform hover:scale-105" style={{ backgroundColor: config.secondaryColor }}>
+                             <Download size={14}/> Baixar / Abrir PDF Externo
+                           </a>
+                         </div>
+                         {/* Visualização Embutida do PDF (Iframe) */}
+                         <div className="w-full h-[600px] border border-gray-200 rounded-xl overflow-hidden bg-gray-50 shadow-sm">
+                            <iframe src={formatDriveLink(rep.attachment)} className="w-full h-full" frameBorder="0" allowFullScreen title="Preview do Relatório"></iframe>
+                         </div>
                       </div>
                     )}
                   </div>
@@ -733,7 +642,7 @@ function TrafficView({ data, setData, user, config, showToast }) {
             </div>
           ))}
         </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -918,21 +827,6 @@ function DocsView({ data, setData, user, config }) {
 
 function SettingsView({ config, setConfig, users, setUsers, showToast }) {
   const [newUser, setNewUser] = useState({ login: '', pass: '', role: 'empresa', name: '' });
-  const [testingApi, setTestingApi] = useState(false);
-
-  const handleTestApi = async () => {
-    if (!config.geminiKey) return showToast("Insira a chave da API antes de testar.");
-    setTestingApi(true);
-    try {
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${config.geminiKey}`);
-      if (res.ok) showToast(`✅ Chave API validada e pronta para uso!`);
-      else throw new Error("Chave inválida.");
-    } catch (err) {
-      showToast(`❌ Erro na chave: ${err.message}`);
-    } finally {
-      setTestingApi(false);
-    }
-  };
 
   const HexInput = ({ label, value, onChange }) => (
     <div>
@@ -948,7 +842,7 @@ function SettingsView({ config, setConfig, users, setUsers, showToast }) {
     <div className="max-w-4xl mx-auto space-y-8 pb-10">
       <div>
         <h1 className="text-3xl font-black">Painel de Controle e Customização</h1>
-        <p className="text-sm font-medium opacity-70 mt-1">Ajuste cores globais, integrações de IA e gerencie os usuários do sistema.</p>
+        <p className="text-sm font-medium opacity-70 mt-1">Ajuste cores globais, links e gerencie os usuários do sistema.</p>
       </div>
       
       <div className="bg-white/80 backdrop-blur-md p-8 rounded-3xl shadow-sm border border-gray-200/50 space-y-6">
@@ -976,22 +870,12 @@ function SettingsView({ config, setConfig, users, setUsers, showToast }) {
       </div>
 
       <div className="bg-white/80 backdrop-blur-md p-8 rounded-3xl shadow-sm border border-gray-200/50 space-y-6">
-        <h2 className="text-xl font-black border-b border-gray-100 pb-3 flex items-center gap-2">🔗 Motores Externos (Data Studio & IA)</h2>
+        <h2 className="text-xl font-black border-b border-gray-100 pb-3 flex items-center gap-2">🔗 Dashboard (Data Studio)</h2>
         <div className="space-y-5">
           <div>
             <label className="text-xs font-bold opacity-60 uppercase tracking-wider block mb-1">Dashboard Embed URL (Data Studio)</label>
             <input value={config.lookerStudioUrl || ''} onChange={e => setConfig({...config, lookerStudioUrl: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none text-sm bg-gray-50 focus:bg-white focus:border-blue-400 font-medium" placeholder="Cole o link do seu relatório Data Studio aqui..." />
             <p className="text-[10px] font-bold text-blue-600 mt-1 uppercase tracking-wide">Cole o link padrão e o sistema converterá em Embed Automaticamente.</p>
-          </div>
-          <div>
-            <label className="text-xs font-bold opacity-60 uppercase tracking-wider block mb-1">Google AI Studio Key (Gemini API)</label>
-            <div className="flex gap-2">
-              <input type="password" value={config.geminiKey} onChange={e => setConfig({...config, geminiKey: e.target.value})} className="flex-1 p-3 border border-gray-200 rounded-xl outline-none bg-gray-50 focus:bg-white focus:border-blue-400 font-mono" placeholder="AIzaSy..." />
-              <button onClick={handleTestApi} disabled={testingApi} className="bg-gray-800 text-white px-5 rounded-xl font-bold shadow-md hover:bg-black transition-colors disabled:opacity-50">
-                {testingApi ? 'Testando...' : 'Verificar API'}
-              </button>
-            </div>
-            <p className="text-[10px] text-gray-500 mt-2">Crie a chave gratuitamente em: aistudio.google.com</p>
           </div>
         </div>
       </div>
