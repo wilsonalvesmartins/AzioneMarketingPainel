@@ -4,20 +4,19 @@ import {
   DollarSign, FileText, Settings, LogOut, Plus, X, 
   MessageSquare, Calendar, Link as LinkIcon, Image, 
   Bot, Save, Edit3, Trash2, ChevronDown, ChevronUp, Copy, Download,
-  BarChart3, FileSearch, Eye, EyeOff
+  BarChart3, BrainCircuit, FileSearch, Eye, EyeOff
 } from 'lucide-react';
 
-// --- FUNÇÕES DE SEGURANÇA MÁXIMA PARA EVITAR TELA BRANCA (CRASH) ---
+// --- FUNÇÕES DE SEGURANÇA MÁXIMA ---
 const safeArray = (arr) => Array.isArray(arr) ? arr : [];
 const safeObject = (obj) => (typeof obj === 'object' && obj !== null && !Array.isArray(obj)) ? obj : {};
 
-// Formata links do Google Drive para modo de visualização (Embed)
 const formatDriveLink = (url) => {
   if (typeof url !== 'string' || !url) return '';
   return url.replace(/\/view.*$/, '/preview').replace(/\/edit.*$/, '/preview');
 };
 
-// --- FUNÇÃO AUXILIAR DE NOMENCLATURA DE CARGOS ---
+// --- NOMENCLATURA DE CARGOS ---
 const getDisplayRole = (role) => {
   if (role === 'empresa') return 'Cliente Completo';
   if (role === 'visualizador') return 'Cliente Visualizador';
@@ -28,7 +27,7 @@ const getDisplayRole = (role) => {
   return role;
 };
 
-// --- MOTOR DA IA (COM RETRY E ESCOLHA INTELIGENTE DE MODELO) ---
+// --- MOTOR DA IA (COM RETRY E FALLBACK AUTOMÁTICO) ---
 const fetchWithRetry = async (url, options, retries = 5) => {
   const delays = [1000, 2000, 4000, 8000, 16000];
   for (let i = 0; i < retries; i++) {
@@ -48,7 +47,7 @@ const fetchWithRetry = async (url, options, retries = 5) => {
 };
 
 const callGeminiWithFallback = async (userPrompt, systemPrompt, userApiKey) => {
-  if (!userApiKey) throw new Error("Chave da API do Google Gemini não configurada.");
+  if (!userApiKey) throw new Error("Chave da API do Google Gemini não está configurada.");
   const cleanKey = userApiKey.trim();
   
   const listUrl = `https://generativelanguage.googleapis.com/v1beta/models?key=${cleanKey}`;
@@ -60,7 +59,7 @@ const callGeminiWithFallback = async (userPrompt, systemPrompt, userApiKey) => {
       m.supportedGenerationMethods?.includes('generateContent') && m.name.includes('gemini')
     );
 
-    if (validModels.length === 0) throw new Error("A chave é válida, mas não tem permissão para usar modelos Gemini.");
+    if (validModels.length === 0) throw new Error("A chave é válida, mas sem permissão para modelos Gemini.");
 
     const preferredModel = 
       validModels.find(m => m.name.includes('1.5-flash')) ||
@@ -80,10 +79,7 @@ const callGeminiWithFallback = async (userPrompt, systemPrompt, userApiKey) => {
   if (modelName === 'models/gemini-pro' || modelName === 'models/gemini-1.0-pro') {
       payload = { contents: [{ parts: [{ text: `[INSTRUÇÕES DO SISTEMA]:\n${systemPrompt}\n\n[PEDIDO DO USUÁRIO]:\n${userPrompt}` }] }] };
   } else {
-      payload = {
-          contents: [{ parts: [{ text: userPrompt }] }],
-          systemInstruction: { parts: [{ text: systemPrompt }] }
-      };
+      payload = { contents: [{ parts: [{ text: userPrompt }] }], systemInstruction: { parts: [{ text: systemPrompt }] } };
   }
 
   const data = await fetchWithRetry(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
@@ -100,65 +96,64 @@ const defaultUsers = [
   { id: 6, login: 'visu', pass: 'visu123', role: 'visualizador', name: 'Aprovador' }
 ];
 
-const defaultKanban = [
-  { id: '1', title: 'Campanha Inicial', desc: 'Vídeo promocional.', link: '', col: 'Ideias', date: '', isCarousel: false, carousel: [], caption: '', comments: [] }
-];
-
-const defaultFinances = [
-  { id: 1, desc: 'Fatura Abril', due: '2026-04-20', pix: '000.000.000-00', boleto: '', nf: '', status: 'Pendente' }
-];
-
-const defaultReports = [{ 
-  id: 1, name: 'Fechamento de Performance', month: '2026-03', type: 'manual', date: new Date().toISOString().split('T')[0], 
-  leads: 150, cost: '5.50', contracts: 10, attachment: '', custom: [{ label: 'Alcance Total', value: '45.000' }] 
-}];
-
-const defaultDocs = [{ id: 1, title: 'Contrato Social', date: '2025-01-10', link: '' }];
+const defaultKanban = [];
+const defaultFinances = [];
+const defaultReports = [];
+const defaultDocs = [];
 
 const defaultConfig = { 
   companyName: 'Azione Marketing', logo: '', color: '#EF4444', secondaryColor: '#991B1B', bgColor: '#F3F4F6', textColor: '#1F2937', geminiKey: '',
-  lookerStudioUrl: 'https://lookerstudio.google.com/reporting/10b2cbf5-4b1f-4f87-a96a-855d8067c523/page/4E6KF'
+  lookerStudioUrl: '', showDataStudioToClient: true
 };
 
-// --- HOOK DE PERSISTÊNCIA ---
+// --- HOOK DE PERSISTÊNCIA NA VPS (REESCRITO PARA GARANTIR SINCRONIA MULTI-DISPOSITIVOS) ---
 function usePersistentState(key, initialValue) {
   const [state, setState] = useState(() => {
     try {
       const local = localStorage.getItem(`azione_${key}`);
-      if (!local || local === 'null' || local === 'undefined') return initialValue;
-      const parsed = JSON.parse(local);
-      if (Array.isArray(initialValue) && !Array.isArray(parsed)) return initialValue;
-      if (typeof initialValue === 'object' && !Array.isArray(initialValue) && (typeof parsed !== 'object' || Array.isArray(parsed) || parsed === null)) return initialValue;
-      return parsed;
-    } catch (e) { return initialValue; }
+      return local ? JSON.parse(local) : initialValue;
+    } catch(e) { return initialValue; }
   });
   
   const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
+    // 1. Busca sempre a verdade absoluta do servidor na inicialização
     fetch(`/api/data/${key}`)
       .then(res => { if (!res.ok) throw new Error(); return res.json(); })
       .then(data => {
         if (data && data.data !== undefined && data.data !== null) {
-          setState(prev => {
-            let newState;
-            if (typeof initialValue === 'object' && !Array.isArray(initialValue)) { newState = { ...initialValue, ...safeObject(prev), ...safeObject(data.data) }; } 
-            else if (Array.isArray(initialValue)) { newState = safeArray(data.data); } 
-            else { newState = data.data; }
-            localStorage.setItem(`azione_${key}`, JSON.stringify(newState));
-            return newState;
+          // Se o servidor tem dados, sobrepõe imediatamente qualquer coisa local
+          setState(data.data);
+          localStorage.setItem(`azione_${key}`, JSON.stringify(data.data));
+        } else {
+          // Se o servidor não tem dados (VPS virgem), salva os dados locais nela para inicializar
+          const local = localStorage.getItem(`azione_${key}`);
+          const dataToPush = local ? JSON.parse(local) : initialValue;
+          setState(dataToPush);
+          fetch(`/api/data/${key}`, { 
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: dataToPush }) 
           });
         }
         setIsLoaded(true);
       })
-      .catch(err => { setIsLoaded(true); });
+      .catch(err => {
+        // Se a VPS falhar totalmente (ex: testando local sem backend), mantem o state base
+        setIsLoaded(true);
+      });
   }, [key]);
 
   const setPersistentState = (newValue) => {
     const valueToStore = typeof newValue === 'function' ? newValue(state) : newValue;
     setState(valueToStore);
-    fetch(`/api/data/${key}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: valueToStore }) }).catch(() => {});
     localStorage.setItem(`azione_${key}`, JSON.stringify(valueToStore));
+    
+    // Salva imediatamente no banco da VPS
+    fetch(`/api/data/${key}`, { 
+      method: 'POST', 
+      headers: { 'Content-Type': 'application/json' }, 
+      body: JSON.stringify({ data: valueToStore }) 
+    }).catch(e => console.error("Erro de rede salvando na VPS:", e));
   };
 
   return [state, setPersistentState, isLoaded];
@@ -192,7 +187,7 @@ export default function App() {
   const showToast = (msg) => setToast(msg);
 
   if (!uLoad || !kLoad || !rLoad || !fLoad || !dLoad || !cLoad) {
-    return <div className="min-h-screen flex items-center justify-center bg-gray-50"><div className="animate-pulse text-xl font-bold text-gray-500">Conectando ao banco de dados...</div></div>;
+    return <div className="min-h-screen flex items-center justify-center bg-gray-50"><div className="animate-pulse text-xl font-bold text-gray-500">Conectando ao servidor...</div></div>;
   }
 
   const safeConf = { ...defaultConfig, ...config };
@@ -204,7 +199,6 @@ export default function App() {
     const found = safeArray(users).find(u => u.login === login && u.pass === pass);
     if (found) { 
       setUser(found); 
-      // Direcionamento dinâmico dependendo da role
       if (found.role === 'gestor de tráfego') setView('traffic');
       else if (found.role === 'financeiro') setView('finance');
       else setView('kanban'); 
@@ -217,31 +211,20 @@ export default function App() {
       <div className="min-h-screen flex items-center justify-center p-4 transition-colors duration-500" style={{ backgroundColor: safeConf.bgColor }}>
         <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md text-center border border-gray-100">
           {safeConf.logo ? <img src={safeConf.logo} alt="Logo" className="h-20 mx-auto mb-6 object-contain" /> : <h1 className="text-3xl font-black mb-6" style={{ color: safeConf.color }}>{safeConf.companyName}</h1>}
-          <form onSubmit={handleLogin} className="space-y-4 relative">
+          <form onSubmit={handleLogin} className="space-y-4">
             <input name="login" type="text" placeholder="Usuário" required className="w-full p-4 border border-gray-200 rounded-xl outline-none focus:ring-2 bg-gray-50 text-gray-800" style={{ focusRing: safeConf.color }} />
             
             <div className="relative">
-              <input 
-                name="pass" 
-                type={showPassword ? "text" : "password"} 
-                placeholder="Senha" 
-                required 
-                className="w-full p-4 border border-gray-200 rounded-xl outline-none focus:ring-2 bg-gray-50 text-gray-800 pr-12" 
-              />
-              <button 
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors focus:outline-none"
-              >
+              <input name="pass" type={showPassword ? "text" : "password"} placeholder="Senha" required className="w-full p-4 border border-gray-200 rounded-xl outline-none focus:ring-2 bg-gray-50 text-gray-800 pr-12" />
+              <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors">
                 {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
               </button>
             </div>
 
             <button type="submit" className="w-full text-white p-4 rounded-xl font-bold text-lg transition-transform hover:scale-[1.02] shadow-lg" style={{ backgroundColor: safeConf.color }}>Acessar Painel</button>
           </form>
-          <div className="mt-6 text-sm text-gray-500 flex flex-col gap-1">
-            <p className="font-bold">Acesso Administrativo:</p>
-            <p>master / master123</p>
+          <div className="mt-6 text-xs font-medium text-gray-400">
+            Acesso Restrito
           </div>
         </div>
         {toast && <Toast msg={toast} onClose={() => setToast('')} />}
@@ -249,7 +232,7 @@ export default function App() {
     );
   }
 
-  // --- CONTROLE DE ACESSO (PERMISSÕES E MENUS) ---
+  // --- MENU BASEADO EM FUNÇÕES ---
   const menuItems = [
     { id: 'kanban', label: 'Esteira', icon: <KanbanSquare size={20} />, roles: ['empresa', 'master', 'social media', 'gestor de tráfego', 'visualizador'] },
     { id: 'calendar', label: 'Cronograma', icon: <CalendarDays size={20} />, roles: ['empresa', 'master', 'social media', 'visualizador'] },
@@ -289,7 +272,7 @@ export default function App() {
         <div className="flex-1 w-full max-w-7xl mx-auto">
           {view === 'kanban' && <KanbanView data={safeArray(kanban)} setData={setKanban} user={user} config={safeConf} showToast={showToast} openCardId={openCardId} setOpenCardId={setOpenCardId} />}
           {view === 'calendar' && <CalendarView data={safeArray(kanban)} config={safeConf} onOpenCard={(id) => { setView('kanban'); setOpenCardId(id); }} />}
-          {view === 'traffic' && <TrafficView data={safeArray(reports)} setData={setReports} user={user} config={safeConf} showToast={showToast} />}
+          {view === 'traffic' && <TrafficView data={safeArray(reports)} setData={setReports} user={user} config={safeConf} setConfig={setConfig} showToast={showToast} />}
           {view === 'finance' && <FinanceView data={safeArray(finances)} setData={setFinances} user={user} config={safeConf} showToast={showToast} />}
           {view === 'docs' && <DocsView data={safeArray(docs)} setData={setDocs} user={user} config={safeConf} />}
           {view === 'settings' && <SettingsView config={safeConf} setConfig={setConfig} users={safeArray(users)} setUsers={setUsers} showToast={showToast} />}
@@ -416,7 +399,7 @@ function KanbanView({ data, setData, user, config, showToast, openCardId, setOpe
               ))}
               {data.filter(c => c.col === col).length === 0 && (
                 <div className="text-center py-6 border-2 border-dashed border-gray-200 rounded-xl opacity-50 flex-1 flex items-center justify-center pointer-events-none">
-                  <span className="text-xs font-bold uppercase tracking-wider text-gray-400">Soltar Aqui</span>
+                  <span className="text-xs font-bold uppercase tracking-wider text-gray-500">Soltar Aqui</span>
                 </div>
               )}
             </div>
@@ -449,15 +432,13 @@ function CardModal({ card, user, config, onClose, onSave, onDelete, showToast })
   const [aiPrompt, setAiPrompt] = useState('');
 
   const canEditCore = ['master', 'social media', 'gestor de tráfego'].includes(user.role);
+  const canEditClient = ['empresa', 'visualizador'].includes(user.role);
 
   const handleAI = async () => {
     setAiLoading(true);
     try {
       const prompt = `Título do Post: ${draft.title}. Descrição: ${draft.desc}. Detalhes extras: ${aiPrompt}`;
-      const systemInstruction = `Você é um copywriter sênior focado em redes sociais.
-REGRA 1: Escreva UMA ÚNICA legenda focada em conversão, com um bom CTA e hashtags estratégicas.
-REGRA 2: Você está PROIBIDO de dizer "Aqui está a legenda", "Opção 1", "Claro, vamos lá!", ou fazer perguntas no final.
-REGRA 3: Não use separadores (---) ou títulos. Apenas devolva O TEXTO PURO E FINAL DA LEGENDA para ser copiado.`;
+      const systemInstruction = `Você é um copywriter sênior focado em redes sociais. REGRA 1: Escreva UMA ÚNICA legenda focada em conversão, com um bom CTA e hashtags estratégicas. REGRA 2: Você está PROIBIDO de dizer "Aqui está a legenda", "Opção 1", "Claro, vamos lá!", ou fazer perguntas no final. REGRA 3: Não use separadores (---) ou títulos. Apenas devolva O TEXTO PURO E FINAL DA LEGENDA para ser copiado.`;
       
       const textoGerado = await callGeminiWithFallback(prompt, systemInstruction, config.geminiKey);
       
@@ -489,7 +470,6 @@ REGRA 3: Não use separadores (---) ou títulos. Apenas devolva O TEXTO PURO E F
             <div className="flex gap-4">
               <div className="flex-1">
                 <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Data Programada</label>
-                {/* Aberto a todos que acessam o Kanban (Empresa, Visualizador, Master, etc) */}
                 <input type="date" value={draft.date} onChange={e => setDraft({...draft, date: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:border-blue-500 bg-gray-50/50" />
               </div>
               <div className="flex-1">
@@ -502,8 +482,7 @@ REGRA 3: Não use separadores (---) ou títulos. Apenas devolva O TEXTO PURO E F
 
             <div>
               <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Descrição / Roteiro</label>
-              {/* Descrição agora liberada para os clientes escreverem e editarem */}
-              <textarea rows={3} value={draft.desc} onChange={e => setDraft({...draft, desc: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:border-blue-500 bg-gray-50/50 resize-none" placeholder="Detalhes do conteúdo..." />
+              <textarea disabled={!(canEditCore || canEditClient)} rows={3} value={draft.desc} onChange={e => setDraft({...draft, desc: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:border-blue-500 bg-gray-50/50 resize-none" placeholder="Detalhes do conteúdo..." />
             </div>
 
             <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
@@ -525,7 +504,7 @@ REGRA 3: Não use separadores (---) ou títulos. Apenas devolva O TEXTO PURO E F
                     }} className="w-full p-3 border border-gray-200 rounded-xl text-sm bg-white shadow-inner" />
                   ))}
                   {canEditCore && draft.carousel.length < 15 && (
-                    <button onClick={() => setDraft({...draft, carousel: [...draft.carousel, '']})} className="text-sm font-bold text-blue-600 flex items-center gap-1 w-full justify-center p-2 hover:bg-blue-50 rounded-lg transition-colors"><Plus size={16}/> Adicionar Slide</button>
+                    <button onClick={() => setDraft({...draft, carousel: [...draft.carousel, '']})} className="text-sm font-bold text-blue-600 flex items-center gap-1 w-full justify-center p-2 hover:bg-blue-50 rounded-lg transition-colors"><Plus size={16}/> Adicionar Slide (+1)</button>
                   )}
                 </div>
               )}
@@ -536,7 +515,7 @@ REGRA 3: Não use separadores (---) ou títulos. Apenas devolva O TEXTO PURO E F
                 )}
                 {draft.isCarousel && draft.carousel.map((link, idx) => link && link.includes('drive.google.com') && (
                   <div key={idx} className="flex flex-col gap-1">
-                    <span className="text-xs font-bold text-gray-400 uppercase">Preview {idx + 1}</span>
+                    <span className="text-xs font-bold text-gray-400 uppercase">Slide {idx + 1}</span>
                     <iframe src={formatDriveLink(link)} className="w-full h-72 border border-gray-200 rounded-xl bg-white shadow-sm" title={`Preview ${idx + 1}`}></iframe>
                   </div>
                 ))}
@@ -547,7 +526,7 @@ REGRA 3: Não use separadores (---) ou títulos. Apenas devolva O TEXTO PURO E F
           <div className="space-y-5 flex flex-col">
             <div className="flex-1 flex flex-col">
               <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Legenda (Copy)</label>
-              <textarea disabled={!canEditCore} value={draft.caption} onChange={e => setDraft({...draft, caption: e.target.value})} className="w-full p-4 border border-gray-200 rounded-xl outline-none focus:border-blue-500 flex-1 min-h-[150px] resize-none mb-3 bg-gray-50/50 leading-relaxed text-gray-700 custom-scrollbar" placeholder="Escreva a legenda..." />
+              <textarea disabled={!canEditCore} value={draft.caption} onChange={e => setDraft({...draft, caption: e.target.value})} className="w-full p-4 border border-gray-200 rounded-xl outline-none focus:border-blue-500 flex-1 min-h-[150px] resize-none mb-3 bg-gray-50/50 leading-relaxed text-gray-700 custom-scrollbar" placeholder="Escreva a legenda ou gere com IA..." />
               
               {canEditCore && (
                 <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 p-4 rounded-2xl">
@@ -575,7 +554,7 @@ REGRA 3: Não use separadores (---) ou títulos. Apenas devolva O TEXTO PURO E F
                 ))}
               </div>
               <div className="flex gap-2">
-                <input value={commentText} onChange={e => setCommentText(e.target.value)} placeholder="Deixe um comentário..." className="flex-1 p-3 border border-gray-200 rounded-xl outline-none text-sm bg-gray-50 focus:bg-white focus:border-blue-400 transition-colors" />
+                <input value={commentText} onChange={e => setCommentText(e.target.value)} placeholder="Deixe um comentário para a equipe..." className="flex-1 p-3 border border-gray-200 rounded-xl outline-none text-sm bg-gray-50 focus:bg-white focus:border-blue-400 transition-colors" />
                 <button onClick={() => {
                   if(!commentText.trim()) return;
                   setDraft({...draft, comments: [...draft.comments, { author: user.role, text: commentText, date: new Date().toISOString() }]});
@@ -644,11 +623,17 @@ function CalendarView({ data, config, onOpenCard }) {
   );
 }
 
-function TrafficView({ data, setData, user, config, showToast }) {
+function TrafficView({ data, setData, user, config, setConfig, showToast }) {
   const isClientReadOnly = ['empresa', 'visualizador'].includes(user.role);
   const isAdmin = ['master', 'gestor de tráfego'].includes(user.role);
-  const [activeTab, setActiveTab] = useState('dataStudio'); 
+  const showDataStudioTab = isAdmin || config.showDataStudioToClient !== false;
+  
+  const [activeTab, setActiveTab] = useState(showDataStudioTab ? 'dataStudio' : 'reports'); 
   const [expandedId, setExpandedId] = useState(null);
+
+  useEffect(() => {
+    if (!showDataStudioTab && activeTab === 'dataStudio') setActiveTab('reports');
+  }, [showDataStudioTab, activeTab]);
 
   const getEmbedUrl = (url) => {
     if(!url) return '';
@@ -658,22 +643,15 @@ function TrafficView({ data, setData, user, config, showToast }) {
 
   const addReport = () => {
     const newRep = { 
-      id: Date.now(), 
-      name: 'Novo Fechamento', 
-      month: new Date().toISOString().slice(0, 7), 
-      type: 'manual', 
-      date: new Date().toISOString().split('T')[0], 
-      leads: 0, cost: '0', contracts: 0, 
-      attachment: '', custom: [] 
+      id: Date.now(), name: 'Novo Fechamento', month: new Date().toISOString().slice(0, 7), 
+      type: 'manual', date: new Date().toISOString().split('T')[0], leads: 0, cost: '0', contracts: 0, attachment: '', custom: [] 
     };
     setData([newRep, ...data]);
     setExpandedId(newRep.id);
   };
 
   const updateReport = (idx, changes) => {
-    const n = [...data];
-    n[idx] = { ...n[idx], ...changes };
-    setData(n);
+    const n = [...data]; n[idx] = { ...n[idx], ...changes }; setData(n);
   };
 
   const deleteReport = (id) => {
@@ -692,9 +670,11 @@ function TrafficView({ data, setData, user, config, showToast }) {
         </div>
         
         <div className="flex bg-gray-200/50 p-1 rounded-xl w-fit">
-          <button onClick={() => setActiveTab('dataStudio')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'dataStudio' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}>
-            <BarChart3 size={16}/> Dashboard Data Studio
-          </button>
+          {showDataStudioTab && (
+            <button onClick={() => setActiveTab('dataStudio')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'dataStudio' ? 'bg-white shadow-sm text-blue-600' : 'text-gray-500 hover:text-gray-800'}`}>
+              <BarChart3 size={16}/> Dashboard Data Studio
+            </button>
+          )}
           <button onClick={() => setActiveTab('reports')} className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-bold transition-all ${activeTab === 'reports' ? 'bg-white shadow-sm text-green-600' : 'text-gray-500 hover:text-gray-800'}`}>
             <FileSearch size={16}/> {isClientReadOnly ? 'Relatórios Mensais' : 'Gerenciar Relatórios'}
           </button>
@@ -703,6 +683,22 @@ function TrafficView({ data, setData, user, config, showToast }) {
 
       {activeTab === 'dataStudio' && (
         <div className="flex-1 bg-white rounded-3xl shadow-sm border border-gray-200/50 overflow-hidden flex flex-col min-h-[600px] relative">
+          {isAdmin && (
+            <div className="bg-gray-100 p-4 border-b border-gray-200 flex justify-between items-center flex-wrap gap-4">
+              <div>
+                <h3 className="text-sm font-black text-gray-700 uppercase tracking-widest">Visibilidade para o Cliente</h3>
+                <p className="text-xs font-medium text-gray-500 mt-1">Defina se a aba do Data Studio aparecerá no painel do cliente.</p>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={() => setConfig({...config, showDataStudioToClient: true})} className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all shadow-sm ${config.showDataStudioToClient !== false ? 'bg-blue-600 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'}`}>
+                  👁️ Visível no Painel
+                </button>
+                <button onClick={() => setConfig({...config, showDataStudioToClient: false})} className={`px-5 py-2.5 rounded-xl text-xs font-bold transition-all shadow-sm ${config.showDataStudioToClient === false ? 'bg-red-500 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'}`}>
+                  🚫 Ocultar do Cliente
+                </button>
+              </div>
+            </div>
+          )}
           {config.lookerStudioUrl ? (
             <iframe src={getEmbedUrl(config.lookerStudioUrl)} frameBorder="0" style={{ border: 0 }} allowFullScreen className="w-full flex-1 h-full min-h-[700px]"></iframe>
           ) : (
@@ -907,7 +903,7 @@ function FinanceView({ data, setData, user, config, showToast }) {
                     <>
                       <div className="w-px bg-gray-200 mx-1"></div>
                       <button onClick={() => setEditingFin(fin)} className="p-2.5 bg-yellow-50 text-yellow-600 rounded-xl hover:bg-yellow-100 border border-yellow-100 shadow-sm" title="Editar"><Edit3 size={18}/></button>
-                      <button onClick={() => {setData(data.filter(d => d.id !== fin.id)); showToast("Fatura apagada!");}} className="p-2.5 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 border border-red-100 shadow-sm" title="Apagar"><Trash2 size={18}/></button>
+                      <button onClick={() => {if(window.confirm('Apagar fatura no cliente?')) setData(data.filter(d => d.id !== fin.id));}} className="p-2.5 bg-red-50 text-red-600 rounded-xl hover:bg-red-100 border border-red-100 shadow-sm" title="Apagar"><Trash2 size={18}/></button>
                     </>
                   )}
                 </td>
@@ -996,7 +992,7 @@ function DocsView({ data, setData, user, config }) {
                 {isAdmin && (
                   <>
                     <button onClick={() => setEditingDocLink(editingDocLink === doc.id ? null : doc.id)} className="p-3 bg-gray-100 rounded-xl hover:bg-gray-200 text-gray-600 transition-colors"><Edit3 size={18}/></button>
-                    <button onClick={() => setData(safeArray(data).filter(d => d.id !== doc.id))} className="p-3 bg-red-50 rounded-xl hover:bg-red-100 text-red-600 transition-colors"><Trash2 size={18}/></button>
+                    <button onClick={() => {if(window.confirm('Apagar documento?')) setData(safeArray(data).filter(d => d.id !== doc.id))}} className="p-3 bg-red-50 rounded-xl hover:bg-red-100 text-red-600 transition-colors"><Trash2 size={18}/></button>
                   </>
                 )}
                 <a href={doc.link || '#'} target="_blank" rel="noreferrer" onClick={e => !doc.link && e.preventDefault()} className={`p-3 rounded-xl transition-colors shadow-sm ${doc.link ? 'text-white' : 'bg-gray-200 text-gray-400 cursor-not-allowed'}`} style={doc.link ? { backgroundColor: config.color } : {}}><Download size={18}/></a>
@@ -1102,9 +1098,7 @@ function SettingsView({ config, setConfig, users, setUsers, showToast }) {
             <div key={u.id} className="flex gap-3 items-center border border-gray-100 p-3 rounded-2xl bg-gray-50 shadow-inner">
               <span className="bg-white shadow-sm border border-gray-200 text-xs font-black px-3 py-1.5 rounded-lg uppercase tracking-wider w-32 text-center text-gray-700">{getDisplayRole(u.role)}</span>
               <input value={u.login} onChange={e => { const n = [...users]; n[i].login = e.target.value; setUsers(n); }} className="flex-1 outline-none font-bold text-gray-800 bg-transparent" placeholder="Login" />
-              <div className="relative flex-1 flex items-center">
-                 <input value={u.pass} onChange={e => { const n = [...users]; n[i].pass = e.target.value; setUsers(n); }} className="w-full outline-none text-gray-500 font-medium bg-transparent" placeholder="Senha" type="text" />
-              </div>
+              <input value={u.pass} onChange={e => { const n = [...users]; n[i].pass = e.target.value; setUsers(n); }} className="flex-1 outline-none text-gray-500 font-medium bg-transparent" placeholder="Senha" type="text" />
               <button onClick={() => {if(users.length>1) setUsers(users.filter(usr=>usr.id!==u.id)); else showToast("Impossível apagar o último.")}} className="p-2.5 bg-red-100 text-red-600 rounded-xl hover:bg-red-200 transition-colors"><Trash2 size={18}/></button>
             </div>
           ))}
