@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   LayoutDashboard, KanbanSquare, CalendarDays, TrendingUp, 
   DollarSign, FileText, Settings, LogOut, Plus, X, 
@@ -118,16 +118,13 @@ function usePersistentState(key, initialValue) {
   const [isLoaded, setIsLoaded] = useState(false);
 
   useEffect(() => {
-    // 1. Busca sempre a verdade absoluta do servidor na inicialização
     fetch(`/api/data/${key}`)
       .then(res => { if (!res.ok) throw new Error(); return res.json(); })
       .then(data => {
         if (data && data.data !== undefined && data.data !== null) {
-          // Se o servidor tem dados, sobrepõe imediatamente qualquer coisa local
           setState(data.data);
           localStorage.setItem(`azione_${key}`, JSON.stringify(data.data));
         } else {
-          // Se o servidor não tem dados (VPS virgem), salva os dados locais nela para inicializar
           const local = localStorage.getItem(`azione_${key}`);
           const dataToPush = local ? JSON.parse(local) : initialValue;
           setState(dataToPush);
@@ -138,7 +135,6 @@ function usePersistentState(key, initialValue) {
         setIsLoaded(true);
       })
       .catch(err => {
-        // Se a VPS falhar totalmente (ex: testando local sem backend), mantem o state base
         setIsLoaded(true);
       });
   }, [key]);
@@ -148,7 +144,6 @@ function usePersistentState(key, initialValue) {
     setState(valueToStore);
     localStorage.setItem(`azione_${key}`, JSON.stringify(valueToStore));
     
-    // Salva imediatamente no banco da VPS
     fetch(`/api/data/${key}`, { 
       method: 'POST', 
       headers: { 'Content-Type': 'application/json' }, 
@@ -174,6 +169,7 @@ export default function App() {
   const [view, setView] = useState('kanban');
   const [toast, setToast] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [showSplash, setShowSplash] = useState(false); // NOVO ESTADO: Controle da Animação
 
   const [users, setUsers, uLoad] = usePersistentState('users', defaultUsers);
   const [kanban, setKanban, kLoad] = usePersistentState('kanban', defaultKanban);
@@ -199,12 +195,18 @@ export default function App() {
     const found = safeArray(users).find(u => u.login === login && u.pass === pass);
     if (found) { 
       setUser(found); 
+      setShowSplash(true); // GATILHO DA ANIMAÇÃO APÓS LOGIN CORRETO
       if (found.role === 'gestor de tráfego') setView('traffic');
       else if (found.role === 'financeiro') setView('finance');
       else setView('kanban'); 
     } 
     else { showToast('Credenciais inválidas!'); }
   };
+
+  // Renderiza a animação cobrindo tudo se for para mostrar
+  if (showSplash) {
+    return <SplashScreen onComplete={() => setShowSplash(false)} />;
+  }
 
   if (!user) {
     return (
@@ -283,6 +285,181 @@ export default function App() {
         </footer>
       </main>
       {toast && <Toast msg={toast} onClose={() => setToast('')} />}
+    </div>
+  );
+}
+
+// ==========================================
+// COMPONENTE: SPLASH SCREEN (ANIMAÇÃO UNO)
+// ==========================================
+function SplashScreen({ onComplete }) {
+  const canvasRef = useRef(null);
+  const [fade, setFade] = useState(false);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext('2d');
+    const dpr = window.devicePixelRatio || 1;
+    const width = 600;
+    const height = 650;
+
+    canvas.width = width * dpr;
+    canvas.height = height * dpr;
+    ctx.scale(dpr, dpr);
+
+    let animationFrameId;
+    let startTime = null;
+
+    const COLOR_DARK = '#340508';
+    const COLOR_GOLD = '#f1aa20';
+    
+    const L1 = 180; 
+    const R = 80; 
+    const L2 = R * Math.PI; 
+    const L3 = 180; 
+    const TOTAL_LENGTH = L1 + L2 + L3;
+
+    const easeInOutCubic = (t) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+    const draw = (timestamp) => {
+      if (!startTime) startTime = timestamp;
+      const elapsed = timestamp - startTime;
+
+      ctx.clearRect(0, 0, width, height);
+
+      const uRawProgress = Math.min(elapsed / 1400, 1);
+      const uProgress = easeInOutCubic(uRawProgress);
+      const arrowProgress = Math.max(0, Math.min((elapsed - 1300) / 400, 1));
+      const textProgress = Math.max(0, Math.min((elapsed - 1700) / 800, 1));
+      const subtextProgress = Math.max(0, Math.min((elapsed - 2200) / 800, 1));
+
+      const gradient = ctx.createLinearGradient(190, 0, 450, 0);
+      gradient.addColorStop(0, COLOR_DARK);
+      gradient.addColorStop(1, COLOR_GOLD);
+
+      // DESENHO DO "U"
+      ctx.lineCap = 'butt';
+      ctx.lineJoin = 'miter';
+      ctx.lineWidth = 60;
+      ctx.strokeStyle = gradient;
+
+      ctx.beginPath();
+      const startX = 220;
+      const startY = 170;
+      ctx.moveTo(startX, startY);
+
+      const currentLength = uProgress * TOTAL_LENGTH;
+
+      if (currentLength <= L1) {
+        ctx.lineTo(startX, startY + currentLength);
+      } else if (currentLength <= L1 + L2) {
+        ctx.lineTo(startX, startY + L1);
+        const arcProgress = (currentLength - L1) / L2;
+        const endAngle = Math.PI - (arcProgress * Math.PI);
+        ctx.arc(300, startY + L1, R, Math.PI, endAngle, true); 
+      } else {
+        ctx.lineTo(startX, startY + L1);
+        ctx.arc(300, startY + L1, R, Math.PI, 0, true);
+        const rightProgressLength = currentLength - L1 - L2;
+        ctx.lineTo(380, startY + L1 - rightProgressLength);
+      }
+      ctx.stroke();
+
+      // DESENHO DA FLECHA
+      if (arrowProgress > 0) {
+        ctx.globalAlpha = arrowProgress;
+        ctx.fillStyle = gradient;
+        
+        ctx.beginPath();
+        const baseArrowY = 171; 
+        const currentLeftX = 380 - (80 * arrowProgress);
+        const currentRightX = 380 + (80 * arrowProgress);
+        const currentTipY = 170 - (100 * arrowProgress);
+
+        ctx.moveTo(380, baseArrowY);
+        ctx.lineTo(currentLeftX, baseArrowY);
+        ctx.lineTo(380, currentTipY);
+        ctx.lineTo(currentRightX, baseArrowY);
+        ctx.closePath();
+        ctx.fill();
+        
+        ctx.globalAlpha = 1.0;
+      }
+
+      // DESENHO DO TEXTO "UNO"
+      if (textProgress > 0) {
+        ctx.globalAlpha = textProgress;
+        ctx.fillStyle = '#111111'; 
+        ctx.font = 'italic 300 75px "Segoe UI", "Helvetica Neue", sans-serif';
+        
+        const text = "UNO";
+        const letterSpacing = 20;
+        
+        ctx.textAlign = 'center';
+        let totalTextWidth = 0;
+        for (let i = 0; i < text.length; i++) {
+            totalTextWidth += ctx.measureText(text[i]).width;
+        }
+        totalTextWidth += letterSpacing * (text.length - 1);
+        
+        let currentTextX = 300 - (totalTextWidth / 2);
+        ctx.textAlign = 'left';
+        
+        const textSlideOffset = 10 * (1 - textProgress);
+        const baseTextY = 550;
+
+        for (let i = 0; i < text.length; i++) {
+            const char = text[i];
+            ctx.fillText(char, currentTextX, baseTextY + textSlideOffset);
+            currentTextX += ctx.measureText(char).width + letterSpacing;
+        }
+
+        ctx.globalAlpha = 1.0;
+      }
+
+      // DESENHO DO SUBTEXTO
+      if (subtextProgress > 0) {
+        ctx.globalAlpha = subtextProgress;
+        ctx.fillStyle = '#555555'; 
+        ctx.font = '400 22px "Segoe UI", "Helvetica Neue", sans-serif';
+        ctx.textAlign = 'center';
+        
+        const subtextSlideOffset = 10 * (1 - subtextProgress);
+        ctx.fillText("Um painel Azione", 300, 595 + subtextSlideOffset);
+        
+        ctx.globalAlpha = 1.0;
+      }
+
+      if (elapsed < 4000) {
+        animationFrameId = requestAnimationFrame(draw);
+      }
+    };
+
+    animationFrameId = requestAnimationFrame(draw);
+
+    // Fade out nos últimos 500ms
+    const fadeTimer = setTimeout(() => { setFade(true); }, 3500);
+    // Unmount aos 4000ms
+    const endTimer = setTimeout(() => { onComplete(); }, 4000);
+
+    return () => {
+      cancelAnimationFrame(animationFrameId);
+      clearTimeout(fadeTimer);
+      clearTimeout(endTimer);
+    };
+  }, [onComplete]);
+
+  return (
+    <div className={`fixed inset-0 z-[100] bg-gray-50 flex items-center justify-center p-6 transition-opacity duration-500 ${fade ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+      <div className="relative w-full max-w-lg aspect-square flex items-center justify-center overflow-hidden p-4">
+        <canvas 
+          ref={canvasRef} 
+          className="w-full h-full object-contain"
+          style={{ maxWidth: '100%', maxHeight: '100%' }}
+        />
+      </div>
     </div>
   );
 }
@@ -526,7 +703,7 @@ function CardModal({ card, user, config, onClose, onSave, onDelete, showToast })
           <div className="space-y-5 flex flex-col">
             <div className="flex-1 flex flex-col">
               <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Legenda (Copy)</label>
-              <textarea disabled={!canEditCore} value={draft.caption} onChange={e => setDraft({...draft, caption: e.target.value})} className="w-full p-4 border border-gray-200 rounded-xl outline-none focus:border-blue-500 flex-1 min-h-[150px] resize-none mb-3 bg-gray-50/50 leading-relaxed text-gray-700 custom-scrollbar" placeholder="Escreva a legenda ou gere com IA..." />
+              <textarea disabled={!canEditCore} value={draft.caption} onChange={e => setDraft({...draft, caption: e.target.value})} className="w-full p-4 border border-gray-200 rounded-xl outline-none focus:border-blue-500 flex-1 min-h-[150px] resize-none mb-3 bg-gray-50/50 leading-relaxed text-gray-700 custom-scrollbar" placeholder="Escreva a legenda..." />
               
               {canEditCore && (
                 <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-100 p-4 rounded-2xl">
@@ -554,7 +731,7 @@ function CardModal({ card, user, config, onClose, onSave, onDelete, showToast })
                 ))}
               </div>
               <div className="flex gap-2">
-                <input value={commentText} onChange={e => setCommentText(e.target.value)} placeholder="Deixe um comentário para a equipe..." className="flex-1 p-3 border border-gray-200 rounded-xl outline-none text-sm bg-gray-50 focus:bg-white focus:border-blue-400 transition-colors" />
+                <input value={commentText} onChange={e => setCommentText(e.target.value)} placeholder="Deixe um comentário..." className="flex-1 p-3 border border-gray-200 rounded-xl outline-none text-sm bg-gray-50 focus:bg-white focus:border-blue-400 transition-colors" />
                 <button onClick={() => {
                   if(!commentText.trim()) return;
                   setDraft({...draft, comments: [...draft.comments, { author: user.role, text: commentText, date: new Date().toISOString() }]});
