@@ -47,6 +47,48 @@ app.post('/api/data/:key', (req, res) => {
     });
 });
 
+// Proxy seguro para webhooks do Disparador UNO.
+// Mantem o navegador longe de problemas de CORS e centraliza o POST no servidor.
+app.post('/api/disparador/webhook', async (req, res) => {
+    const { webhookUrl, payload } = req.body || {};
+
+    if (!webhookUrl || typeof webhookUrl !== 'string') {
+        return res.status(400).json({ message: 'Webhook nao configurado.' });
+    }
+
+    try {
+        const parsedUrl = new URL(webhookUrl);
+        if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
+            return res.status(400).json({ message: 'URL de webhook invalida.' });
+        }
+
+        const response = await fetch(webhookUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload || {})
+        });
+
+        const responseText = await response.text();
+        if (!response.ok) {
+            return res.status(502).json({
+                message: 'O webhook recusou o disparo.',
+                status: response.status,
+                responseText: responseText.slice(0, 2000)
+            });
+        }
+
+        return res.json({
+            ok: true,
+            status: response.status,
+            responseText: responseText.slice(0, 2000)
+        });
+    } catch (error) {
+        return res.status(502).json({
+            message: `Falha ao chamar webhook: ${error.message}`
+        });
+    }
+});
+
 // --- ROTA CORINGA PARA O REACT (SPA) ---
 // Qualquer rota não reconhecida acima será direcionada para o index.html do React
 app.get('*', (req, res) => {
