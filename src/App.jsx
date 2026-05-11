@@ -4,7 +4,8 @@ import {
   DollarSign, FileText, Settings, LogOut, Plus, X, 
   MessageSquare, Calendar, Link as LinkIcon, Image, 
   Bot, Save, Edit3, Trash2, ChevronDown, ChevronUp, Copy, Download,
-  BarChart3, BrainCircuit, FileSearch, Eye, EyeOff
+  BarChart3, BrainCircuit, FileSearch, Eye, EyeOff,
+  Send, Upload, Users, CheckCircle2, XCircle, RefreshCw, Megaphone
 } from 'lucide-react';
 
 // --- FUNÇÕES DE SEGURANÇA MÁXIMA ---
@@ -106,6 +107,88 @@ const defaultConfig = {
   lookerStudioUrl: '', showDataStudioToClient: true
 };
 
+const defaultDisparadorContacts = [];
+const defaultDisparadorCreatives = [];
+const defaultDisparadorCampaigns = [];
+const defaultDisparadorConfig = {
+  webhookUrl: '',
+  lastWebhookResponse: ''
+};
+
+const normalizePhone = (phone) => String(phone || '').replace(/[^\d+]/g, '');
+
+const splitCsvLine = (line) => {
+  const values = [];
+  let current = '';
+  let quoted = false;
+
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    const next = line[index + 1];
+
+    if (char === '"' && quoted && next === '"') {
+      current += '"';
+      index += 1;
+      continue;
+    }
+
+    if (char === '"') {
+      quoted = !quoted;
+      continue;
+    }
+
+    if ((char === ',' || char === ';') && !quoted) {
+      values.push(current.trim());
+      current = '';
+      continue;
+    }
+
+    current += char;
+  }
+
+  values.push(current.trim());
+  return values;
+};
+
+const normalizeCsvHeader = (value) =>
+  String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+
+const parseContactsCsv = (csv) => {
+  const lines = String(csv || '')
+    .replace(/^\uFEFF/, '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length < 2) {
+    throw new Error('O CSV precisa ter cabecalho e pelo menos uma linha.');
+  }
+
+  const headers = splitCsvLine(lines[0]).map(normalizeCsvHeader);
+  const nameIndex = headers.findIndex((header) => ['nome', 'name'].includes(header));
+  const phoneIndex = headers.findIndex((header) => ['telefone', 'phone', 'whatsapp', 'celular'].includes(header));
+  const notesIndex = headers.findIndex((header) => ['observacoes', 'observacao', 'obs', 'notas'].includes(header));
+
+  if (nameIndex === -1 || phoneIndex === -1) {
+    throw new Error('O CSV precisa conter as colunas nome e telefone.');
+  }
+
+  return lines.slice(1).map((line, index) => {
+    const values = splitCsvLine(line);
+    return {
+      id: Date.now() + index,
+      name: values[nameIndex]?.trim() || '',
+      phone: normalizePhone(values[phoneIndex] || ''),
+      notes: notesIndex >= 0 ? values[notesIndex]?.trim() || '' : '',
+      createdAt: new Date().toISOString()
+    };
+  }).filter((contact) => contact.name && contact.phone);
+};
+
 // --- HOOK DE PERSISTÊNCIA NA VPS (REESCRITO PARA GARANTIR SINCRONIA MULTI-DISPOSITIVOS) ---
 function usePersistentState(key, initialValue) {
   const [state, setState] = useState(() => {
@@ -177,12 +260,16 @@ export default function App() {
   const [finances, setFinances, fLoad] = usePersistentState('finances', defaultFinances);
   const [docs, setDocs, dLoad] = usePersistentState('docs', defaultDocs);
   const [config, setConfig, cLoad] = usePersistentState('config', defaultConfig);
+  const [disparadorContacts, setDisparadorContacts, dcLoad] = usePersistentState('disparadorContacts', defaultDisparadorContacts);
+  const [disparadorCreatives, setDisparadorCreatives, dcrLoad] = usePersistentState('disparadorCreatives', defaultDisparadorCreatives);
+  const [disparadorCampaigns, setDisparadorCampaigns, dcpLoad] = usePersistentState('disparadorCampaigns', defaultDisparadorCampaigns);
+  const [disparadorConfig, setDisparadorConfig, dcfgLoad] = usePersistentState('disparadorConfig', defaultDisparadorConfig);
 
   const [openCardId, setOpenCardId] = useState(null);
 
   const showToast = (msg) => setToast(msg);
 
-  if (!uLoad || !kLoad || !rLoad || !fLoad || !dLoad || !cLoad) {
+  if (!uLoad || !kLoad || !rLoad || !fLoad || !dLoad || !cLoad || !dcLoad || !dcrLoad || !dcpLoad || !dcfgLoad) {
     return <div className="min-h-screen flex items-center justify-center bg-gray-50"><div className="animate-pulse text-xl font-bold text-gray-500">Conectando ao servidor...</div></div>;
   }
 
@@ -239,6 +326,7 @@ export default function App() {
     { id: 'kanban', label: 'Esteira', icon: <KanbanSquare size={20} />, roles: ['empresa', 'master', 'social media', 'gestor de tráfego', 'visualizador'] },
     { id: 'calendar', label: 'Cronograma', icon: <CalendarDays size={20} />, roles: ['empresa', 'master', 'social media', 'visualizador'] },
     { id: 'traffic', label: 'Dados de Tráfego', icon: <TrendingUp size={20} />, roles: ['empresa', 'master', 'gestor de tráfego', 'visualizador'] },
+    { id: 'disparador', label: 'Disparador', icon: <Send size={20} />, roles: ['master'] },
     { id: 'finance', label: 'Financeiro', icon: <DollarSign size={20} />, roles: ['empresa', 'master', 'financeiro'] },
     { id: 'docs', label: 'Documentos', icon: <FileText size={20} />, roles: ['empresa', 'master', 'financeiro'] },
     { id: 'settings', label: 'Configurações', icon: <Settings size={20} />, roles: ['master'] },
@@ -275,6 +363,7 @@ export default function App() {
           {view === 'kanban' && <KanbanView data={safeArray(kanban)} setData={setKanban} user={user} config={safeConf} showToast={showToast} openCardId={openCardId} setOpenCardId={setOpenCardId} />}
           {view === 'calendar' && <CalendarView data={safeArray(kanban)} config={safeConf} onOpenCard={(id) => { setView('kanban'); setOpenCardId(id); }} />}
           {view === 'traffic' && <TrafficView data={safeArray(reports)} setData={setReports} user={user} config={safeConf} setConfig={setConfig} showToast={showToast} />}
+          {view === 'disparador' && <DisparadorView contacts={safeArray(disparadorContacts)} setContacts={setDisparadorContacts} creatives={safeArray(disparadorCreatives)} setCreatives={setDisparadorCreatives} campaigns={safeArray(disparadorCampaigns)} setCampaigns={setDisparadorCampaigns} disparadorConfig={{ ...defaultDisparadorConfig, ...safeObject(disparadorConfig) }} setDisparadorConfig={setDisparadorConfig} config={safeConf} showToast={showToast} />}
           {view === 'finance' && <FinanceView data={safeArray(finances)} setData={setFinances} user={user} config={safeConf} showToast={showToast} />}
           {view === 'docs' && <DocsView data={safeArray(docs)} setData={setDocs} user={user} config={safeConf} />}
           {view === 'settings' && <SettingsView config={safeConf} setConfig={setConfig} users={safeArray(users)} setUsers={setUsers} showToast={showToast} />}
@@ -1018,6 +1107,398 @@ function MetricBox({ label, val, onChange, edit, color }) {
         <input value={val || ''} onChange={e => onChange(e.target.value)} className="font-black text-xl text-center w-full outline-none border-b focus:border-opacity-100 border-transparent transition-colors bg-transparent" style={{ color: color, borderBottomColor: color }} />
       ) : (
         <span className="font-black text-xl" style={{ color: color }}>{val}</span>
+      )}
+    </div>
+  );
+}
+
+function DisparadorView({ contacts, setContacts, creatives, setCreatives, campaigns, setCampaigns, disparadorConfig, setDisparadorConfig, config, showToast }) {
+  const [activeTab, setActiveTab] = useState('campaign');
+  const [contactForm, setContactForm] = useState({ name: '', phone: '', notes: '' });
+  const [creativeForm, setCreativeForm] = useState({ name: '', type: 'TEXT', content: '', mediaUrl: '' });
+  const [campaignName, setCampaignName] = useState('');
+  const [creativeId, setCreativeId] = useState('');
+  const [selectedContacts, setSelectedContacts] = useState([]);
+  const [selectedCampaignId, setSelectedCampaignId] = useState('');
+  const [sending, setSending] = useState(false);
+  const [csvLoading, setCsvLoading] = useState(false);
+
+  const sortedContacts = [...contacts].sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+  const selectedCampaign = campaigns.find((campaign) => String(campaign.id) === String(selectedCampaignId)) || campaigns[0];
+  const selectedCreative = creatives.find((creative) => String(creative.id) === String(creativeId));
+
+  useEffect(() => {
+    if (!creativeId && creatives.length > 0) setCreativeId(String(creatives[0].id));
+  }, [creativeId, creatives]);
+
+  const statusText = {
+    WAITING_N8N: 'Pendente',
+    SENT: 'Enviado',
+    FAILED: 'Falhou'
+  };
+
+  const upsertContact = (event) => {
+    event.preventDefault();
+    const phone = normalizePhone(contactForm.phone);
+    if (!contactForm.name.trim() || phone.length < 8) return showToast('Informe nome e telefone validos.');
+
+    const exists = contacts.find((contact) => contact.phone === phone);
+    if (exists) {
+      setContacts(contacts.map((contact) => contact.phone === phone ? { ...contact, name: contactForm.name.trim(), notes: contactForm.notes.trim() } : contact));
+      showToast('Contato atualizado.');
+    } else {
+      setContacts([...contacts, { id: Date.now(), name: contactForm.name.trim(), phone, notes: contactForm.notes.trim(), createdAt: new Date().toISOString() }]);
+      showToast('Contato salvo.');
+    }
+    setContactForm({ name: '', phone: '', notes: '' });
+  };
+
+  const importCsv = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+
+    setCsvLoading(true);
+    try {
+      const parsed = parseContactsCsv(await file.text());
+      const byPhone = new Map(contacts.map((contact) => [contact.phone, contact]));
+      parsed.forEach((contact) => byPhone.set(contact.phone, { ...byPhone.get(contact.phone), ...contact }));
+      setContacts(Array.from(byPhone.values()).sort((a, b) => a.name.localeCompare(b.name)));
+      showToast(`${parsed.length} contato(s) importado(s) ou atualizado(s).`);
+    } catch (error) {
+      showToast(error.message);
+    } finally {
+      setCsvLoading(false);
+    }
+  };
+
+  const saveCreative = (event) => {
+    event.preventDefault();
+    if (!creativeForm.name.trim() || !creativeForm.content.trim()) return showToast('Informe nome e conteudo do criativo.');
+    if (creativeForm.type !== 'TEXT' && !creativeForm.mediaUrl.trim()) return showToast('Informe a URL da midia.');
+
+    setCreatives([
+      { id: Date.now(), ...creativeForm, name: creativeForm.name.trim(), content: creativeForm.content.trim(), mediaUrl: creativeForm.mediaUrl.trim(), createdAt: new Date().toISOString() },
+      ...creatives
+    ]);
+    setCreativeForm({ name: '', type: 'TEXT', content: '', mediaUrl: '' });
+    showToast('Criativo salvo.');
+  };
+
+  const toggleContact = (contactId) => {
+    setSelectedContacts((current) => {
+      if (current.includes(contactId)) return current.filter((id) => id !== contactId);
+      if (current.length >= 30) {
+        showToast('Selecione no maximo 30 contatos por disparo.');
+        return current;
+      }
+      return [...current, contactId];
+    });
+  };
+
+  const startCampaign = async (event) => {
+    event.preventDefault();
+    if (!campaignName.trim()) return showToast('Informe o nome da campanha.');
+    if (!selectedCreative) return showToast('Selecione um criativo.');
+    if (selectedContacts.length === 0) return showToast('Selecione pelo menos um contato.');
+
+    const selected = sortedContacts.filter((contact) => selectedContacts.includes(contact.id));
+    const newCampaign = {
+      id: Date.now(),
+      name: campaignName.trim(),
+      creative: selectedCreative,
+      status: 'IN_PROGRESS',
+      startedAt: new Date().toISOString(),
+      dispatches: selected.map((contact) => ({
+        id: `${Date.now()}-${contact.id}`,
+        contact,
+        status: 'WAITING_N8N',
+        converted: false,
+        notes: '',
+        sentAt: null
+      })),
+      webhookResponse: ''
+    };
+
+    const payload = {
+      source: 'uno-disparador',
+      confirmationMode: 'manual',
+      campaign: { id: newCampaign.id, name: newCampaign.name, startedAt: newCampaign.startedAt },
+      creative: selectedCreative,
+      contacts: selected.map((contact) => ({ id: contact.id, name: contact.name, phone: contact.phone, notes: contact.notes }))
+    };
+
+    setSending(true);
+    try {
+      let webhookResponse = 'Sem webhook configurado. Confirme os envios manualmente no historico.';
+      if (disparadorConfig.webhookUrl) {
+        const response = await fetch('/api/disparador/webhook', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ webhookUrl: disparadorConfig.webhookUrl, payload })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(result.message || 'Falha ao chamar o webhook.');
+        webhookResponse = result.responseText || 'Webhook chamado com sucesso.';
+      }
+
+      const campaignToSave = { ...newCampaign, webhookResponse };
+      setCampaigns([campaignToSave, ...campaigns]);
+      setSelectedCampaignId(String(campaignToSave.id));
+      setCampaignName('');
+      setSelectedContacts([]);
+      setActiveTab('history');
+      showToast('Campanha criada. Confirmacao dos envios sera manual.');
+    } catch (error) {
+      showToast(error.message);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const updateDispatch = (campaignId, dispatchId, patch) => {
+    setCampaigns(campaigns.map((campaign) => {
+      if (String(campaign.id) !== String(campaignId)) return campaign;
+      const dispatches = campaign.dispatches.map((dispatch) => (
+        String(dispatch.id) === String(dispatchId)
+          ? { ...dispatch, ...patch, sentAt: patch.status === 'SENT' ? new Date().toISOString() : dispatch.sentAt }
+          : dispatch
+      ));
+      const finished = dispatches.length > 0 && dispatches.every((dispatch) => dispatch.status !== 'WAITING_N8N');
+      return { ...campaign, dispatches, status: finished ? 'COMPLETED' : 'IN_PROGRESS', completedAt: finished ? new Date().toISOString() : null };
+    }));
+  };
+
+  const clearData = (target) => {
+    const confirmText = window.prompt(`Digite APAGAR para limpar ${target}.`);
+    if (confirmText !== 'APAGAR') return;
+    if (target === 'contatos') {
+      setContacts([]);
+      setCampaigns([]);
+    }
+    if (target === 'criativos') {
+      setCreatives([]);
+      setCampaigns([]);
+    }
+    if (target === 'campanhas') setCampaigns([]);
+    if (target === 'tudo') {
+      setContacts([]);
+      setCreatives([]);
+      setCampaigns([]);
+    }
+    showToast('Dados do disparador limpos.');
+  };
+
+  return (
+    <div className="max-w-7xl mx-auto space-y-6 pb-10">
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-black flex items-center gap-3"><Megaphone size={30} /> Disparador WhatsApp</h1>
+          <p className="text-sm font-medium opacity-70 mt-1">Contatos, criativos, campanhas e confirmacao manual dentro do UNO.</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {[
+            ['campaign', 'Nova campanha'],
+            ['contacts', 'Contatos'],
+            ['creatives', 'Criativos'],
+            ['history', 'Historico'],
+            ['settings', 'Ajustes']
+          ].map(([id, label]) => (
+            <button key={id} onClick={() => setActiveTab(id)} className={`px-4 py-2 rounded-xl font-black text-sm transition-all ${activeTab === id ? 'text-white shadow-md' : 'bg-white text-gray-600 border border-gray-200 hover:bg-gray-50'}`} style={activeTab === id ? { backgroundColor: config.color } : {}}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {activeTab === 'campaign' && (
+        <form onSubmit={startCampaign} className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-5">
+          <div className="space-y-5">
+            <div className="bg-white/80 p-6 rounded-3xl border border-gray-200/50 shadow-sm">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="text-xs font-bold opacity-60 uppercase tracking-wider block mb-1">Nome da campanha</label>
+                  <input value={campaignName} onChange={(e) => setCampaignName(e.target.value)} className="w-full p-3 border border-gray-200 rounded-xl outline-none font-bold bg-gray-50" placeholder="Ex: Oferta Maio" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold opacity-60 uppercase tracking-wider block mb-1">Criativo</label>
+                  <select value={creativeId} onChange={(e) => setCreativeId(e.target.value)} className="w-full p-3 border border-gray-200 rounded-xl outline-none font-bold bg-gray-50">
+                    {creatives.map((creative) => <option key={creative.id} value={creative.id}>{creative.name}</option>)}
+                  </select>
+                </div>
+              </div>
+            </div>
+            <div className="bg-white/80 p-6 rounded-3xl border border-gray-200/50 shadow-sm">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-black">Selecionar contatos</h2>
+                <span className="text-xs font-black bg-gray-100 px-3 py-1 rounded-full">{selectedContacts.length}/30</span>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                {sortedContacts.map((contact) => {
+                  const selected = selectedContacts.includes(contact.id);
+                  return (
+                    <button type="button" key={contact.id} onClick={() => toggleContact(contact.id)} className={`text-left p-4 rounded-2xl border transition-all ${selected ? 'bg-green-50 border-green-300 shadow-sm' : 'bg-white border-gray-200 hover:border-gray-300'}`}>
+                      <div className="flex items-start gap-3">
+                        <span className={`w-6 h-6 rounded-lg flex items-center justify-center border ${selected ? 'bg-green-600 border-green-600 text-white' : 'bg-gray-50 border-gray-200'}`}>{selected && <CheckCircle2 size={15} />}</span>
+                        <span>
+                          <strong className="block text-gray-800">{contact.name}</strong>
+                          <small className="block text-gray-500 font-bold">{contact.phone}</small>
+                        </span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+              {sortedContacts.length === 0 && <div className="text-center p-10 font-bold opacity-50">Cadastre ou importe contatos para iniciar.</div>}
+            </div>
+          </div>
+          <aside className="bg-white/80 p-6 rounded-3xl border border-gray-200/50 shadow-sm h-fit space-y-4">
+            <h2 className="text-xl font-black">Resumo</h2>
+            <div className="grid gap-3">
+              <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100"><span className="text-xs font-black opacity-50 uppercase">Contatos</span><strong className="block text-2xl">{selectedContacts.length}</strong></div>
+              <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100"><span className="text-xs font-black opacity-50 uppercase">Criativo</span><strong className="block">{selectedCreative?.name || 'Nenhum'}</strong></div>
+              <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100"><span className="text-xs font-black opacity-50 uppercase">Webhook</span><strong className="block">{disparadorConfig.webhookUrl ? 'Configurado' : 'Manual'}</strong></div>
+            </div>
+            <button disabled={sending || !selectedCreative || selectedContacts.length === 0} className="w-full text-white p-4 rounded-xl font-black shadow-lg disabled:opacity-50 flex items-center justify-center gap-2" style={{ backgroundColor: config.color }}>
+              <Send size={18} /> {sending ? 'Iniciando...' : 'Iniciar disparo'}
+            </button>
+          </aside>
+        </form>
+      )}
+
+      {activeTab === 'contacts' && (
+        <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-5">
+          <div className="bg-white/80 p-6 rounded-3xl border border-gray-200/50 shadow-sm overflow-x-auto">
+            <h2 className="text-xl font-black mb-4">Contatos</h2>
+            <table className="w-full text-left">
+              <thead><tr className="text-xs uppercase opacity-50 border-b"><th className="p-3">Nome</th><th className="p-3">Telefone</th><th className="p-3">Observacoes</th><th className="p-3 text-right">Acoes</th></tr></thead>
+              <tbody>
+                {sortedContacts.map((contact) => (
+                  <tr key={contact.id} className="border-b border-gray-100">
+                    <td className="p-3 font-black">{contact.name}</td>
+                    <td className="p-3 font-bold text-gray-600">{contact.phone}</td>
+                    <td className="p-3 text-gray-500">{contact.notes || '-'}</td>
+                    <td className="p-3 text-right"><button onClick={() => setContacts(contacts.filter((item) => item.id !== contact.id))} className="p-2 bg-red-50 text-red-600 rounded-xl"><Trash2 size={16} /></button></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <aside className="space-y-5">
+            <form onSubmit={upsertContact} className="bg-white/80 p-6 rounded-3xl border border-gray-200/50 shadow-sm space-y-3">
+              <h2 className="text-xl font-black">Novo contato</h2>
+              <input value={contactForm.name} onChange={(e) => setContactForm({ ...contactForm, name: e.target.value })} className="w-full p-3 border border-gray-200 rounded-xl bg-gray-50" placeholder="Nome" />
+              <input value={contactForm.phone} onChange={(e) => setContactForm({ ...contactForm, phone: e.target.value })} className="w-full p-3 border border-gray-200 rounded-xl bg-gray-50" placeholder="5511999999999" />
+              <textarea value={contactForm.notes} onChange={(e) => setContactForm({ ...contactForm, notes: e.target.value })} className="w-full p-3 border border-gray-200 rounded-xl bg-gray-50" placeholder="Observacoes" rows={3} />
+              <button className="w-full text-white p-3 rounded-xl font-black" style={{ backgroundColor: config.color }}>Salvar contato</button>
+            </form>
+            <div className="bg-white/80 p-6 rounded-3xl border border-gray-200/50 shadow-sm space-y-3">
+              <h2 className="text-xl font-black">Importar CSV</h2>
+              <label className="flex items-center justify-center gap-2 p-4 rounded-2xl border-2 border-dashed border-gray-300 bg-gray-50 font-black text-gray-600 cursor-pointer">
+                <Upload size={18} /> {csvLoading ? 'Importando...' : 'Selecionar CSV'}
+                <input type="file" accept=".csv,text/csv" onChange={importCsv} className="hidden" />
+              </label>
+              <p className="text-xs font-bold text-gray-400">Colunas: nome, telefone, observacoes.</p>
+            </div>
+          </aside>
+        </div>
+      )}
+
+      {activeTab === 'creatives' && (
+        <div className="grid grid-cols-1 xl:grid-cols-[1fr_380px] gap-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {creatives.map((creative) => (
+              <article key={creative.id} className="bg-white/80 p-6 rounded-3xl border border-gray-200/50 shadow-sm">
+                <span className="text-xs font-black bg-blue-50 text-blue-700 px-3 py-1 rounded-full">{creative.type}</span>
+                <h3 className="font-black text-xl mt-3">{creative.name}</h3>
+                <p className="text-sm text-gray-600 whitespace-pre-wrap mt-2">{creative.content}</p>
+                {creative.mediaUrl && <a href={creative.mediaUrl} target="_blank" rel="noreferrer" className="block text-xs text-blue-600 font-bold mt-3 break-all">{creative.mediaUrl}</a>}
+                <button onClick={() => setCreatives(creatives.filter((item) => item.id !== creative.id))} className="mt-4 text-red-600 bg-red-50 p-2 rounded-xl"><Trash2 size={16} /></button>
+              </article>
+            ))}
+          </div>
+          <form onSubmit={saveCreative} className="bg-white/80 p-6 rounded-3xl border border-gray-200/50 shadow-sm h-fit space-y-3">
+            <h2 className="text-xl font-black">Novo criativo</h2>
+            <input value={creativeForm.name} onChange={(e) => setCreativeForm({ ...creativeForm, name: e.target.value })} className="w-full p-3 border border-gray-200 rounded-xl bg-gray-50" placeholder="Nome do criativo" />
+            <select value={creativeForm.type} onChange={(e) => setCreativeForm({ ...creativeForm, type: e.target.value })} className="w-full p-3 border border-gray-200 rounded-xl bg-gray-50 font-bold">
+              <option value="TEXT">Texto</option>
+              <option value="IMAGE">Imagem</option>
+              <option value="VIDEO">Video</option>
+            </select>
+            {creativeForm.type !== 'TEXT' && <input value={creativeForm.mediaUrl} onChange={(e) => setCreativeForm({ ...creativeForm, mediaUrl: e.target.value })} className="w-full p-3 border border-gray-200 rounded-xl bg-gray-50" placeholder="URL da midia" />}
+            <textarea value={creativeForm.content} onChange={(e) => setCreativeForm({ ...creativeForm, content: e.target.value })} className="w-full p-3 border border-gray-200 rounded-xl bg-gray-50" rows={6} placeholder={creativeForm.type === 'TEXT' ? 'Mensagem' : 'Legenda'} />
+            <button className="w-full text-white p-3 rounded-xl font-black" style={{ backgroundColor: config.color }}>Salvar criativo</button>
+          </form>
+        </div>
+      )}
+
+      {activeTab === 'history' && (
+        <div className="grid grid-cols-1 xl:grid-cols-[360px_1fr] gap-5">
+          <div className="space-y-3">
+            {campaigns.map((campaign) => {
+              const sent = campaign.dispatches.filter((dispatch) => dispatch.status === 'SENT').length;
+              return (
+                <button key={campaign.id} onClick={() => setSelectedCampaignId(String(campaign.id))} className={`w-full text-left bg-white/80 p-4 rounded-2xl border shadow-sm ${String(selectedCampaign?.id) === String(campaign.id) ? 'border-gray-800' : 'border-gray-200/50'}`}>
+                  <strong className="block">{campaign.name}</strong>
+                  <small className="font-bold text-gray-500">{sent}/{campaign.dispatches.length} enviados</small>
+                </button>
+              );
+            })}
+            {campaigns.length === 0 && <div className="bg-white/80 p-8 rounded-3xl text-center font-bold opacity-50">Nenhuma campanha.</div>}
+          </div>
+          {selectedCampaign && (
+            <div className="bg-white/80 p-6 rounded-3xl border border-gray-200/50 shadow-sm overflow-x-auto">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-5">
+                <div><h2 className="text-2xl font-black">{selectedCampaign.name}</h2><p className="text-sm font-bold text-gray-500">{selectedCampaign.creative?.name}</p></div>
+                <span className={`px-3 py-1 rounded-full text-xs font-black ${selectedCampaign.status === 'COMPLETED' ? 'bg-green-50 text-green-700' : 'bg-yellow-50 text-yellow-700'}`}>{selectedCampaign.status === 'COMPLETED' ? 'Finalizada' : 'Em andamento'}</span>
+              </div>
+              <table className="w-full text-left">
+                <thead><tr className="text-xs uppercase opacity-50 border-b"><th className="p-3">Contato</th><th className="p-3">Status</th><th className="p-3">Observacoes pos-disparo</th><th className="p-3">Converteu</th></tr></thead>
+                <tbody>
+                  {selectedCampaign.dispatches.map((dispatch) => (
+                    <tr key={dispatch.id} className="border-b border-gray-100">
+                      <td className="p-3"><strong className="block">{dispatch.contact.name}</strong><small className="font-bold text-gray-500">{dispatch.contact.phone}</small></td>
+                      <td className="p-3">
+                        <select value={dispatch.status} onChange={(e) => updateDispatch(selectedCampaign.id, dispatch.id, { status: e.target.value })} className="p-2 border border-gray-200 rounded-xl bg-gray-50 font-bold">
+                          <option value="WAITING_N8N">Pendente</option>
+                          <option value="SENT">Enviado</option>
+                          <option value="FAILED">Falhou</option>
+                        </select>
+                        <span className="block text-xs font-bold mt-1 text-gray-400">{statusText[dispatch.status]}</span>
+                      </td>
+                      <td className="p-3"><textarea value={dispatch.notes || ''} onChange={(e) => updateDispatch(selectedCampaign.id, dispatch.id, { notes: e.target.value })} className="w-full min-w-[220px] p-2 border border-gray-200 rounded-xl bg-gray-50" rows={2} /></td>
+                      <td className="p-3">
+                        <button onClick={() => updateDispatch(selectedCampaign.id, dispatch.id, { converted: !dispatch.converted })} className={`p-2 rounded-xl ${dispatch.converted ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-600'}`}>{dispatch.converted ? <CheckCircle2 size={18} /> : <XCircle size={18} />}</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {activeTab === 'settings' && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+          <div className="bg-white/80 p-6 rounded-3xl border border-gray-200/50 shadow-sm space-y-4">
+            <h2 className="text-xl font-black">Ajustes do disparador</h2>
+            <div>
+              <label className="text-xs font-bold opacity-60 uppercase tracking-wider block mb-1">Webhook opcional</label>
+              <input value={disparadorConfig.webhookUrl || ''} onChange={(e) => setDisparadorConfig({ ...disparadorConfig, webhookUrl: e.target.value })} className="w-full p-3 border border-gray-200 rounded-xl bg-gray-50" placeholder="https://seu-n8n.com/webhook/..." />
+              <p className="text-xs font-bold text-gray-400 mt-2">A confirmacao de envio continua manual, mesmo quando o webhook for chamado.</p>
+            </div>
+          </div>
+          <div className="bg-red-50 p-6 rounded-3xl border border-red-100 shadow-sm space-y-4">
+            <h2 className="text-xl font-black text-red-700">Limpeza de dados</h2>
+            <div className="grid grid-cols-2 gap-3">
+              <button onClick={() => clearData('campanhas')} className="bg-red-600 text-white p-3 rounded-xl font-black">Campanhas</button>
+              <button onClick={() => clearData('contatos')} className="bg-red-600 text-white p-3 rounded-xl font-black">Contatos</button>
+              <button onClick={() => clearData('criativos')} className="bg-red-600 text-white p-3 rounded-xl font-black">Criativos</button>
+              <button onClick={() => clearData('tudo')} className="bg-gray-900 text-white p-3 rounded-xl font-black">Tudo</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
