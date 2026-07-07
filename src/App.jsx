@@ -802,7 +802,7 @@ function KanbanView({ data, setData, user, config, showToast, openCardId, setOpe
   };
 
   const createCard = () => {
-    const newCard = { id: Date.now().toString(), title: 'Nova Ideia', desc: '', link: '', col: 'Ideias', date: '', isCarousel: false, carousel: [], caption: '', comments: [] };
+    const newCard = { id: Date.now().toString(), title: 'Nova Ideia', desc: '', link: '', col: 'Ideias', date: '', isCarousel: false, carousel: [], caption: '', comments: [], createdBy: user.role };
     setData([...data, newCard]);
     setActiveCard(newCard);
   };
@@ -815,7 +815,7 @@ function KanbanView({ data, setData, user, config, showToast, openCardId, setOpe
     }
   };
 
-  const canCreate = ['master', 'social media', 'gestor de tráfego'].includes(user.role);
+  const canCreate = ['empresa', 'visualizador', 'master', 'social media', 'gestor de tráfego'].includes(user.role);
 
   return (
     <div className="h-full flex flex-col">
@@ -933,6 +933,7 @@ function CardModal({ card, user, config, onClose, onSave, onDelete, showToast })
 
   const canEditCore = ['master', 'social media', 'gestor de tráfego'].includes(user.role);
   const canEditClient = ['empresa', 'visualizador'].includes(user.role);
+  const canEditRequest = canEditCore || canEditClient;
 
   const handleAI = async () => {
     setAiLoading(true);
@@ -964,7 +965,7 @@ function CardModal({ card, user, config, onClose, onSave, onDelete, showToast })
           <div className="space-y-5">
             <div>
               <label className="text-xs font-bold text-gray-500 uppercase tracking-wider block mb-1">Título</label>
-              <input disabled={!canEditCore} value={draft.title} onChange={e => setDraft({...draft, title: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:border-blue-500 bg-gray-50/50 font-bold text-lg" />
+              <input disabled={!canEditRequest} value={draft.title} onChange={e => setDraft({...draft, title: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:border-blue-500 bg-gray-50/50 font-bold text-lg" />
             </div>
             
             <div className="flex gap-4">
@@ -989,21 +990,21 @@ function CardModal({ card, user, config, onClose, onSave, onDelete, showToast })
               <div className="flex items-center justify-between mb-3">
                 <label className="text-xs font-bold text-gray-500 uppercase tracking-wider">Link da Mídia (Drive)</label>
                 <label className="flex items-center gap-2 text-sm font-semibold text-gray-600 bg-white px-3 py-1 rounded-full shadow-sm border border-gray-200 cursor-pointer">
-                  <input type="checkbox" disabled={!canEditCore} checked={draft.isCarousel} onChange={e => setDraft({...draft, isCarousel: e.target.checked})} className="accent-blue-600" />
+                  <input type="checkbox" disabled={!canEditRequest} checked={draft.isCarousel} onChange={e => setDraft({...draft, isCarousel: e.target.checked})} className="accent-blue-600" />
                   Modo Carrossel
                 </label>
               </div>
               
               {!draft.isCarousel ? (
-                <input aria-label="Link da mídia" disabled={!canEditCore} value={draft.link} placeholder="Cole o link do Google Drive" onChange={e => setDraft({...draft, link: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:border-blue-500 bg-white shadow-inner mb-2 text-sm" />
+                <input aria-label="Link da mídia" disabled={!canEditRequest} value={draft.link} placeholder="Cole o link do Google Drive" onChange={e => setDraft({...draft, link: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:border-blue-500 bg-white shadow-inner mb-2 text-sm" />
               ) : (
                 <div className="space-y-2">
                   {draft.carousel.map((link, i) => (
-                    <input key={i} disabled={!canEditCore} value={link} placeholder={`Link da Imagem/Vídeo ${i+1}`} onChange={e => {
+                    <input key={i} disabled={!canEditRequest} value={link} placeholder={`Link da Imagem/Vídeo ${i+1}`} onChange={e => {
                       const newC = [...draft.carousel]; newC[i] = e.target.value; setDraft({...draft, carousel: newC});
                     }} className="w-full p-3 border border-gray-200 rounded-xl text-sm bg-white shadow-inner" />
                   ))}
-                  {canEditCore && draft.carousel.length < 15 && (
+                  {canEditRequest && draft.carousel.length < 15 && (
                     <button onClick={() => setDraft({...draft, carousel: [...draft.carousel, '']})} className="text-sm font-bold text-blue-600 flex items-center gap-1 w-full justify-center p-2 hover:bg-blue-50 rounded-lg transition-colors"><Plus size={16}/> Adicionar Slide (+1)</button>
                   )}
                 </div>
