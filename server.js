@@ -11,10 +11,9 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '2mb' }));
 
 // Servir os arquivos estáticos do React (quando em produção)
-app.use(express.static(path.join(__dirname, 'dist')));
 
 // Banco de Dados na VPS (Armazenamento Permanente)
 const dbPath = path.join(__dirname, 'data', 'database.sqlite');
@@ -51,18 +50,19 @@ app.post('/api/data/:key', (req, res) => {
 // Mantem o navegador longe de problemas de CORS e centraliza o POST no servidor.
 app.post('/api/disparador/webhook', async (req, res) => {
     const { webhookUrl, payload } = req.body || {};
+    const targetUrl = typeof webhookUrl === 'string' ? webhookUrl.trim() : '';
 
-    if (!webhookUrl || typeof webhookUrl !== 'string') {
+    if (!targetUrl) {
         return res.status(400).json({ message: 'Webhook nao configurado.' });
     }
 
     try {
-        const parsedUrl = new URL(webhookUrl);
+        const parsedUrl = new URL(targetUrl);
         if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
             return res.status(400).json({ message: 'URL de webhook invalida.' });
         }
 
-        const response = await fetch(webhookUrl, {
+        const response = await fetch(targetUrl, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload || {})
@@ -88,6 +88,9 @@ app.post('/api/disparador/webhook', async (req, res) => {
         });
     }
 });
+
+// Servir os arquivos estaticos do React (quando em producao)
+app.use(express.static(path.join(__dirname, 'dist')));
 
 // --- ROTA CORINGA PARA O REACT (SPA) ---
 // Qualquer rota não reconhecida acima será direcionada para o index.html do React

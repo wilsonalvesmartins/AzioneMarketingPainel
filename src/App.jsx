@@ -104,7 +104,9 @@ const defaultDocs = [];
 
 const defaultConfig = { 
   companyName: 'Azione Marketing', logo: '', color: '#EF4444', secondaryColor: '#991B1B', bgColor: '#F3F4F6', textColor: '#1F2937', geminiKey: '',
-  lookerStudioUrl: '', showDataStudioToClient: true
+  lookerStudioUrl: '', showDataStudioToClient: true,
+  splashSubtitle: 'Um painel Azione',
+  footerText: 'Este é um app oficial Azione Marketing, todos os direitos reservados!'
 };
 
 const defaultDisparadorContacts = [];
@@ -114,6 +116,23 @@ const defaultDisparadorConfig = {
   webhookUrl: '',
   lastWebhookResponse: ''
 };
+
+const buildDisparadorPayload = (campaign, creative, contacts) => ({
+  source: 'uno-disparador',
+  confirmationMode: 'manual',
+  campaign: {
+    id: campaign.id,
+    name: campaign.name,
+    startedAt: campaign.startedAt
+  },
+  creative,
+  contacts: contacts.map((contact) => ({
+    id: contact.id,
+    name: contact.name,
+    phone: contact.phone,
+    notes: contact.notes
+  }))
+});
 
 const normalizePhone = (phone) => String(phone || '').replace(/[^\d+]/g, '');
 
@@ -240,7 +259,7 @@ function usePersistentState(key, initialValue) {
 const Toast = ({ msg, onClose }) => {
   useEffect(() => { const timer = setTimeout(onClose, 5000); return () => clearTimeout(timer); }, [onClose]);
   return (
-    <div className="fixed bottom-4 right-4 bg-gray-900 text-white px-6 py-3 rounded-xl shadow-2xl flex items-center gap-3 z-50 animate-bounce max-w-md border border-gray-700">
+    <div className="fixed bottom-4 right-4 bg-gray-900 text-white px-6 py-3 rounded-xl shadow-2xl flex items-center gap-3 z-50 animate-toast-in max-w-md border border-gray-700">
       <span className="text-sm font-medium">{msg}</span>
       <button onClick={onClose} className="hover:text-gray-300 flex-shrink-0"><X size={16} /></button>
     </div>
@@ -274,7 +293,18 @@ export default function App() {
   }
 
   const safeConf = { ...defaultConfig, ...config };
-  const appStyles = { backgroundColor: safeConf.bgColor, color: safeConf.textColor };
+  const appStyles = {
+    backgroundColor: safeConf.bgColor,
+    color: safeConf.textColor,
+    backgroundImage: `radial-gradient(circle at top left, ${safeConf.color}16, transparent 34rem), radial-gradient(circle at bottom right, ${safeConf.secondaryColor}12, transparent 30rem), linear-gradient(135deg, ${safeConf.bgColor}, #ffffff 130%)`
+  };
+  const brandInitials = safeConf.companyName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(word => word[0])
+    .join('')
+    .toUpperCase() || 'UN';
 
   const handleLogin = (e) => {
     e.preventDefault();
@@ -292,25 +322,27 @@ export default function App() {
 
   // Renderiza a animação cobrindo tudo se for para mostrar
   if (showSplash) {
-    return <SplashScreen onComplete={() => setShowSplash(false)} />;
+    return <SplashScreen config={safeConf} onComplete={() => setShowSplash(false)} />;
   }
 
   if (!user) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4 transition-colors duration-500" style={{ backgroundColor: safeConf.bgColor }}>
-        <div className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md text-center border border-gray-100">
-          {safeConf.logo ? <img src={safeConf.logo} alt="Logo" className="h-20 mx-auto mb-6 object-contain" /> : <h1 className="text-3xl font-black mb-6" style={{ color: safeConf.color }}>{safeConf.companyName}</h1>}
+      <div className="min-h-screen flex items-center justify-center p-4 transition-colors duration-500 relative overflow-hidden" style={{ ...appStyles, '--accent': safeConf.color }}>
+        <div className="absolute inset-0 pointer-events-none opacity-70" style={{ backgroundImage: `linear-gradient(120deg, ${safeConf.color}10, transparent 42%, ${safeConf.secondaryColor}12)` }}></div>
+        <div className="bg-white/90 backdrop-blur-xl p-8 rounded-2xl shadow-2xl shadow-gray-900/10 w-full max-w-md text-center border border-white/70 animate-panel-in relative">
+          {safeConf.logo ? <img src={safeConf.logo} alt="Logo" className="h-20 mx-auto mb-6 object-contain drop-shadow-sm" /> : <h1 className="text-3xl font-black mb-2" style={{ color: safeConf.color }}>{safeConf.companyName}</h1>}
+          <p className="text-sm font-semibold text-gray-400 mb-6">Entre para gerenciar sua operação</p>
           <form onSubmit={handleLogin} className="space-y-4">
-            <input name="login" type="text" placeholder="Usuário" required className="w-full p-4 border border-gray-200 rounded-xl outline-none focus:ring-2 bg-gray-50 text-gray-800" style={{ focusRing: safeConf.color }} />
+            <input name="login" type="text" placeholder="Usuário" required className="w-full p-4 border border-gray-200 rounded-xl outline-none bg-gray-50/80 text-gray-800 focus-accent transition-all" />
             
             <div className="relative">
-              <input name="pass" type={showPassword ? "text" : "password"} placeholder="Senha" required className="w-full p-4 border border-gray-200 rounded-xl outline-none focus:ring-2 bg-gray-50 text-gray-800 pr-12" />
+              <input name="pass" type={showPassword ? "text" : "password"} placeholder="Senha" required className="w-full p-4 border border-gray-200 rounded-xl outline-none bg-gray-50/80 text-gray-800 pr-12 focus-accent transition-all" />
               <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 transition-colors">
                 {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
               </button>
             </div>
 
-            <button type="submit" className="w-full text-white p-4 rounded-xl font-bold text-lg transition-transform hover:scale-[1.02] shadow-lg" style={{ backgroundColor: safeConf.color }}>Acessar Painel</button>
+            <button type="submit" className="w-full text-white p-4 rounded-xl font-bold text-lg transition-all hover:-translate-y-0.5 hover:shadow-xl shadow-lg" style={{ backgroundColor: safeConf.color }}>Acessar Painel</button>
           </form>
           <div className="mt-6 text-xs font-medium text-gray-400">
             Acesso Restrito
@@ -332,12 +364,24 @@ export default function App() {
     { id: 'settings', label: 'Configurações', icon: <Settings size={20} />, roles: ['master'] },
   ].filter(item => item.roles.includes(user.role));
 
+  const viewDetails = {
+    kanban: { title: 'Esteira de Conteúdo', subtitle: 'Acompanhe criação, aprovação e publicação em um só fluxo.' },
+    calendar: { title: 'Cronograma', subtitle: 'Veja os próximos conteúdos e abra cada pauta rapidamente.' },
+    traffic: { title: 'Dados de Tráfego', subtitle: 'Centralize relatórios e indicadores de performance.' },
+    disparador: { title: 'Disparador', subtitle: 'Prepare contatos, criativos e campanhas com controle.' },
+    finance: { title: 'Financeiro', subtitle: 'Organize cobranças, boletos, notas e status de pagamento.' },
+    docs: { title: 'Documentos', subtitle: 'Mantenha arquivos e contratos importantes sempre à mão.' },
+    settings: { title: 'Painel Master', subtitle: 'Personalize identidade, textos, integrações e acessos.' },
+  };
+  const activeMenuItem = menuItems.find(item => item.id === view) || menuItems[0];
+  const activeView = viewDetails[view] || { title: activeMenuItem?.label || 'Painel', subtitle: 'Gerencie as informações do sistema.' };
+
   return (
-    <div className="min-h-screen flex flex-col md:flex-row transition-colors duration-500 font-sans" style={appStyles}>
-      <aside className="bg-white border-r border-gray-200 md:w-64 flex-shrink-0 flex flex-col justify-between shadow-sm z-10" style={{ borderTop: `5px solid ${safeConf.color}` }}>
+    <div className="min-h-screen flex flex-col md:flex-row transition-colors duration-500 font-sans bg-fixed" style={appStyles}>
+      <aside className="bg-white/85 backdrop-blur-xl border-r border-white/60 md:w-72 flex-shrink-0 flex flex-col justify-between shadow-xl shadow-gray-900/5 z-20" style={{ borderTop: `5px solid ${safeConf.color}` }}>
         <div className="p-5 md:p-6">
           <div className="flex items-center gap-3 mb-8 overflow-hidden">
-            {safeConf.logo ? <img src={safeConf.logo} alt="Logo" className="h-10 flex-shrink-0 object-contain" /> : <div className="w-10 h-10 rounded-xl flex-shrink-0 flex items-center justify-center text-white font-black text-xl shadow-md" style={{ backgroundColor: safeConf.color }}>AZ</div>}
+            {safeConf.logo ? <img src={safeConf.logo} alt="Logo" className="h-11 flex-shrink-0 object-contain drop-shadow-sm" /> : <div className="w-11 h-11 rounded-xl flex-shrink-0 flex items-center justify-center text-white font-black text-lg shadow-lg shadow-gray-900/10" style={{ backgroundColor: safeConf.color }}>{brandInitials}</div>}
             <div className="hidden md:block truncate">
               <h2 className="font-bold text-gray-800 leading-tight truncate text-lg">{safeConf.companyName}</h2>
               <p className="text-xs font-bold text-gray-400 uppercase tracking-wider mt-1">{getDisplayRole(user.role)}</p>
@@ -345,7 +389,7 @@ export default function App() {
           </div>
           <nav className="flex md:flex-col gap-2 overflow-x-auto md:overflow-visible pb-2 md:pb-0">
             {menuItems.map(item => (
-              <button key={item.id} onClick={() => setView(item.id)} className={`flex items-center gap-3 p-3 rounded-xl transition-all whitespace-nowrap font-semibold ${view === item.id ? 'text-white shadow-md' : 'text-gray-500 hover:bg-gray-100 hover:text-gray-800'}`} style={view === item.id ? { backgroundColor: safeConf.color } : {}}>
+              <button key={item.id} onClick={() => setView(item.id)} className={`group flex items-center gap-3 p-3 rounded-xl transition-all whitespace-nowrap font-semibold ${view === item.id ? 'text-white shadow-lg shadow-gray-900/10' : 'text-gray-500 hover:bg-white hover:text-gray-900 hover:shadow-sm'}`} style={view === item.id ? { backgroundColor: safeConf.color } : {}}>
                 {item.icon} <span className="hidden md:block">{item.label}</span>
               </button>
             ))}
@@ -359,7 +403,28 @@ export default function App() {
       </aside>
 
       <main className="flex-1 p-4 md:p-8 overflow-y-auto w-full max-w-[100vw] flex flex-col relative" style={{ color: safeConf.textColor }}>
-        <div className="flex-1 w-full max-w-7xl mx-auto">
+        <header className="w-full max-w-7xl mx-auto mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3 min-w-0">
+            <div className="w-12 h-12 rounded-xl flex items-center justify-center text-white shadow-lg shadow-gray-900/10 flex-shrink-0" style={{ backgroundColor: safeConf.color }}>
+              {activeMenuItem?.icon || <LayoutDashboard size={20} />}
+            </div>
+            <div className="min-w-0">
+              <p className="text-xs font-black uppercase tracking-wider opacity-50">Área de trabalho</p>
+              <h1 className="text-2xl md:text-3xl font-black leading-tight truncate">{activeView.title}</h1>
+              <p className="text-sm font-medium opacity-60 mt-1 line-clamp-2">{activeView.subtitle}</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="px-3 py-2 rounded-xl bg-white/80 border border-white/70 shadow-sm text-xs font-black uppercase tracking-wider text-gray-500">
+              {user.name || getDisplayRole(user.role)}
+            </span>
+            <button onClick={() => setUser(null)} className="md:hidden flex items-center justify-center gap-2 text-gray-500 hover:text-red-600 bg-white/80 hover:bg-red-50 border border-white/70 p-3 rounded-xl transition-colors font-bold shadow-sm">
+              <LogOut size={18} />
+            </button>
+          </div>
+        </header>
+
+        <div key={view} className="flex-1 w-full max-w-7xl mx-auto animate-panel-in">
           {view === 'kanban' && <KanbanView data={safeArray(kanban)} setData={setKanban} user={user} config={safeConf} showToast={showToast} openCardId={openCardId} setOpenCardId={setOpenCardId} />}
           {view === 'calendar' && <CalendarView data={safeArray(kanban)} config={safeConf} onOpenCard={(id) => { setView('kanban'); setOpenCardId(id); }} />}
           {view === 'traffic' && <TrafficView data={safeArray(reports)} setData={setReports} user={user} config={safeConf} setConfig={setConfig} showToast={showToast} />}
@@ -369,9 +434,11 @@ export default function App() {
           {view === 'settings' && <SettingsView config={safeConf} setConfig={setConfig} users={safeArray(users)} setUsers={setUsers} showToast={showToast} />}
         </div>
         
-        <footer className="mt-12 pt-6 border-t border-gray-200/50 text-center text-xs font-semibold" style={{ color: `${safeConf.textColor}80` }}>
-          Este é um app oficial Azione Marketing, todos os direitos reservados!
-        </footer>
+        {safeConf.footerText && (
+          <footer className="mt-12 pt-6 border-t border-gray-200/50 text-center text-xs font-semibold" style={{ color: `${safeConf.textColor}80` }}>
+            {safeConf.footerText}
+          </footer>
+        )}
       </main>
       {toast && <Toast msg={toast} onClose={() => setToast('')} />}
     </div>
@@ -381,9 +448,12 @@ export default function App() {
 // ==========================================
 // COMPONENTE: SPLASH SCREEN (ANIMAÇÃO UNO)
 // ==========================================
-function SplashScreen({ onComplete }) {
+function SplashScreen({ config, onComplete }) {
   const canvasRef = useRef(null);
   const [fade, setFade] = useState(false);
+  const primaryColor = config?.color || '#f1aa20';
+  const secondaryColor = config?.secondaryColor || '#340508';
+  const splashSubtitle = (config?.splashSubtitle || `Um painel ${config?.companyName || 'Azione'}`).slice(0, 80);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -401,8 +471,8 @@ function SplashScreen({ onComplete }) {
     let animationFrameId;
     let startTime = null;
 
-    const COLOR_DARK = '#340508';
-    const COLOR_GOLD = '#f1aa20';
+    const COLOR_DARK = secondaryColor;
+    const COLOR_GOLD = primaryColor;
     
     const L1 = 180; 
     const R = 80; 
@@ -512,11 +582,16 @@ function SplashScreen({ onComplete }) {
       if (subtextProgress > 0) {
         ctx.globalAlpha = subtextProgress;
         ctx.fillStyle = '#555555'; 
-        ctx.font = '400 22px "Segoe UI", "Helvetica Neue", sans-serif';
         ctx.textAlign = 'center';
+
+        let subtitleFontSize = 22;
+        do {
+          ctx.font = `400 ${subtitleFontSize}px "Segoe UI", "Helvetica Neue", sans-serif`;
+          subtitleFontSize -= 1;
+        } while (subtitleFontSize > 13 && ctx.measureText(splashSubtitle).width > 500);
         
         const subtextSlideOffset = 10 * (1 - subtextProgress);
-        ctx.fillText("Um painel Azione", 300, 595 + subtextSlideOffset);
+        ctx.fillText(splashSubtitle, 300, 595 + subtextSlideOffset);
         
         ctx.globalAlpha = 1.0;
       }
@@ -538,7 +613,7 @@ function SplashScreen({ onComplete }) {
       clearTimeout(fadeTimer);
       clearTimeout(endTimer);
     };
-  }, [onComplete]);
+  }, [onComplete, primaryColor, secondaryColor, splashSubtitle]);
 
   return (
     <div className={`fixed inset-0 z-[100] bg-gray-50 flex items-center justify-center p-6 transition-opacity duration-500 ${fade ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
@@ -1122,6 +1197,8 @@ function DisparadorView({ contacts, setContacts, creatives, setCreatives, campai
   const [selectedCampaignId, setSelectedCampaignId] = useState('');
   const [sending, setSending] = useState(false);
   const [csvLoading, setCsvLoading] = useState(false);
+  const [webhookUrlDraft, setWebhookUrlDraft] = useState(disparadorConfig.webhookUrl || '');
+  const [analyzingCampaignId, setAnalyzingCampaignId] = useState('');
 
   const sortedContacts = [...contacts].sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
   const selectedCampaign = campaigns.find((campaign) => String(campaign.id) === String(selectedCampaignId)) || campaigns[0];
@@ -1130,6 +1207,10 @@ function DisparadorView({ contacts, setContacts, creatives, setCreatives, campai
   useEffect(() => {
     if (!creativeId && creatives.length > 0) setCreativeId(String(creatives[0].id));
   }, [creativeId, creatives]);
+
+  useEffect(() => {
+    setWebhookUrlDraft(disparadorConfig.webhookUrl || '');
+  }, [disparadorConfig.webhookUrl]);
 
   const statusText = {
     WAITING_N8N: 'Pendente',
@@ -1220,35 +1301,37 @@ function DisparadorView({ contacts, setContacts, creatives, setCreatives, campai
       webhookResponse: ''
     };
 
-    const payload = {
-      source: 'uno-disparador',
-      confirmationMode: 'manual',
-      campaign: { id: newCampaign.id, name: newCampaign.name, startedAt: newCampaign.startedAt },
-      creative: selectedCreative,
-      contacts: selected.map((contact) => ({ id: contact.id, name: contact.name, phone: contact.phone, notes: contact.notes }))
-    };
+    const payload = buildDisparadorPayload(newCampaign, selectedCreative, selected);
 
     setSending(true);
     try {
+      const webhookUrl = webhookUrlDraft.trim();
+      if (webhookUrl !== (disparadorConfig.webhookUrl || '')) {
+        setDisparadorConfig({ ...disparadorConfig, webhookUrl });
+      }
+
       let webhookResponse = 'Sem webhook configurado. Confirme os envios manualmente no historico.';
-      if (disparadorConfig.webhookUrl) {
+      if (webhookUrl) {
         const response = await fetch('/api/disparador/webhook', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ webhookUrl: disparadorConfig.webhookUrl, payload })
+          body: JSON.stringify({ webhookUrl, payload })
         });
         const result = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(result.message || 'Falha ao chamar o webhook.');
-        webhookResponse = result.responseText || 'Webhook chamado com sucesso.';
+        if (!response.ok) {
+          throw new Error(`${result.message || 'Falha ao chamar o webhook.'}${result.responseText ? ` Retorno: ${result.responseText}` : ''}`);
+        }
+        webhookResponse = `Webhook chamado com status ${result.status || 200}. ${result.responseText || ''}`.trim();
       }
 
       const campaignToSave = { ...newCampaign, webhookResponse };
       setCampaigns([campaignToSave, ...campaigns]);
+      setDisparadorConfig({ ...disparadorConfig, webhookUrl, lastWebhookResponse: webhookResponse });
       setSelectedCampaignId(String(campaignToSave.id));
       setCampaignName('');
       setSelectedContacts([]);
       setActiveTab('history');
-      showToast('Campanha criada. Confirmacao dos envios sera manual.');
+      showToast(webhookUrl ? 'Campanha criada e enviada ao webhook. Confirmacao manual no historico.' : 'Campanha criada. Confirmacao dos envios sera manual.');
     } catch (error) {
       showToast(error.message);
     } finally {
@@ -1267,6 +1350,62 @@ function DisparadorView({ contacts, setContacts, creatives, setCreatives, campai
       const finished = dispatches.length > 0 && dispatches.every((dispatch) => dispatch.status !== 'WAITING_N8N');
       return { ...campaign, dispatches, status: finished ? 'COMPLETED' : 'IN_PROGRESS', completedAt: finished ? new Date().toISOString() : null };
     }));
+  };
+
+  const analyzeCampaign = async (campaign) => {
+    if (!campaign) return;
+    if (!config.geminiKey) return showToast('Configure a chave Gemini em Configuracoes do UNO.');
+
+    setAnalyzingCampaignId(String(campaign.id));
+    try {
+      const converted = campaign.dispatches.filter((dispatch) => dispatch.converted).length;
+      const sent = campaign.dispatches.filter((dispatch) => dispatch.status === 'SENT').length;
+      const structuredData = {
+        campaign: {
+          id: campaign.id,
+          name: campaign.name,
+          status: campaign.status,
+          startedAt: campaign.startedAt,
+          completedAt: campaign.completedAt || null
+        },
+        creative: campaign.creative,
+        metrics: {
+          totalContacts: campaign.dispatches.length,
+          sent,
+          converted,
+          conversionRate: campaign.dispatches.length ? `${Math.round((converted / campaign.dispatches.length) * 100)}%` : '0%'
+        },
+        contacts: campaign.dispatches.map((dispatch) => ({
+          name: dispatch.contact.name,
+          phone: dispatch.contact.phone,
+          status: statusText[dispatch.status] || dispatch.status,
+          converted: dispatch.converted,
+          initialNotes: dispatch.contact.notes || '',
+          postNotes: dispatch.notes || ''
+        }))
+      };
+
+      const systemPrompt = [
+        'Voce e um analista senior de CRM e vendas por WhatsApp.',
+        'Gere um relatorio em portugues do Brasil, objetivo e acionavel.',
+        'Inclua resumo executivo, taxa de conversao, padroes nas observacoes, objecoes, proximos passos e sugestoes para o proximo criativo.',
+        'Nao invente dados ausentes.'
+      ].join(' ');
+
+      const userPrompt = `Analise esta campanha de WhatsApp:\n\n${JSON.stringify(structuredData, null, 2)}`;
+      const report = await callGeminiWithFallback(userPrompt, systemPrompt, config.geminiKey);
+
+      setCampaigns(campaigns.map((item) => (
+        String(item.id) === String(campaign.id)
+          ? { ...item, aiReport: report, aiAnalyzedAt: new Date().toISOString() }
+          : item
+      )));
+      showToast('Analise da campanha gerada com Gemini.');
+    } catch (error) {
+      showToast(`Erro na analise Gemini: ${error.message}`);
+    } finally {
+      setAnalyzingCampaignId('');
+    }
   };
 
   const clearData = (target) => {
@@ -1357,7 +1496,11 @@ function DisparadorView({ contacts, setContacts, creatives, setCreatives, campai
             <div className="grid gap-3">
               <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100"><span className="text-xs font-black opacity-50 uppercase">Contatos</span><strong className="block text-2xl">{selectedContacts.length}</strong></div>
               <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100"><span className="text-xs font-black opacity-50 uppercase">Criativo</span><strong className="block">{selectedCreative?.name || 'Nenhum'}</strong></div>
-              <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100"><span className="text-xs font-black opacity-50 uppercase">Webhook</span><strong className="block">{disparadorConfig.webhookUrl ? 'Configurado' : 'Manual'}</strong></div>
+              <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100 space-y-2">
+                <span className="text-xs font-black opacity-50 uppercase">Webhook n8n</span>
+                <input value={webhookUrlDraft} onChange={(e) => setWebhookUrlDraft(e.target.value)} className="w-full p-2 border border-gray-200 rounded-xl bg-white text-xs font-bold" placeholder="https://seu-n8n.com/webhook/..." />
+                <small className="block text-[10px] font-bold text-gray-400">Se preenchido, o webhook sera chamado ao iniciar a campanha.</small>
+              </div>
             </div>
             <button disabled={sending || !selectedCreative || selectedContacts.length === 0} className="w-full text-white p-4 rounded-xl font-black shadow-lg disabled:opacity-50 flex items-center justify-center gap-2" style={{ backgroundColor: config.color }}>
               <Send size={18} /> {sending ? 'Iniciando...' : 'Iniciar disparo'}
@@ -1450,8 +1593,18 @@ function DisparadorView({ contacts, setContacts, creatives, setCreatives, campai
             <div className="bg-white/80 p-6 rounded-3xl border border-gray-200/50 shadow-sm overflow-x-auto">
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-5">
                 <div><h2 className="text-2xl font-black">{selectedCampaign.name}</h2><p className="text-sm font-bold text-gray-500">{selectedCampaign.creative?.name}</p></div>
-                <span className={`px-3 py-1 rounded-full text-xs font-black ${selectedCampaign.status === 'COMPLETED' ? 'bg-green-50 text-green-700' : 'bg-yellow-50 text-yellow-700'}`}>{selectedCampaign.status === 'COMPLETED' ? 'Finalizada' : 'Em andamento'}</span>
+                <div className="flex flex-wrap gap-2 items-center">
+                  <button onClick={() => analyzeCampaign(selectedCampaign)} disabled={analyzingCampaignId === String(selectedCampaign.id)} className="flex items-center gap-2 bg-purple-50 text-purple-700 px-4 py-2 rounded-xl font-black text-sm border border-purple-100 disabled:opacity-50">
+                    <BrainCircuit size={18} /> {analyzingCampaignId === String(selectedCampaign.id) ? 'Analisando...' : 'Analisar com Gemini'}
+                  </button>
+                  <span className={`px-3 py-1 rounded-full text-xs font-black ${selectedCampaign.status === 'COMPLETED' ? 'bg-green-50 text-green-700' : 'bg-yellow-50 text-yellow-700'}`}>{selectedCampaign.status === 'COMPLETED' ? 'Finalizada' : 'Em andamento'}</span>
+                </div>
               </div>
+              {selectedCampaign.webhookResponse && (
+                <div className="mb-5 bg-blue-50 text-blue-800 border border-blue-100 rounded-2xl p-4 text-sm font-bold whitespace-pre-wrap">
+                  Retorno do webhook: {selectedCampaign.webhookResponse}
+                </div>
+              )}
               <table className="w-full text-left">
                 <thead><tr className="text-xs uppercase opacity-50 border-b"><th className="p-3">Contato</th><th className="p-3">Status</th><th className="p-3">Observacoes pos-disparo</th><th className="p-3">Converteu</th></tr></thead>
                 <tbody>
@@ -1474,6 +1627,15 @@ function DisparadorView({ contacts, setContacts, creatives, setCreatives, campai
                   ))}
                 </tbody>
               </table>
+              {selectedCampaign.aiReport && (
+                <div className="mt-6 bg-gray-900 text-white rounded-3xl p-6">
+                  <div className="flex items-center gap-2 mb-3">
+                    <BrainCircuit size={20} />
+                    <h3 className="font-black text-lg">Analise Gemini</h3>
+                  </div>
+                  <pre className="whitespace-pre-wrap text-sm leading-relaxed font-sans">{selectedCampaign.aiReport}</pre>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -1716,6 +1878,15 @@ function SettingsView({ config, setConfig, users, setUsers, showToast }) {
             <div>
               <label className="text-xs font-bold opacity-60 uppercase tracking-wider block mb-1">URL da Logotipo</label>
               <input value={config.logo} onChange={e => setConfig({...config, logo: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none text-sm bg-gray-50 focus:bg-white focus:border-blue-400" placeholder="Ex: https://..." />
+            </div>
+            <div>
+              <label className="text-xs font-bold opacity-60 uppercase tracking-wider block mb-1">Texto inferior da animação</label>
+              <input value={config.splashSubtitle || ''} onChange={e => setConfig({...config, splashSubtitle: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none text-sm bg-gray-50 focus:bg-white focus:border-blue-400 font-medium" placeholder="Ex: Um painel da sua marca" maxLength={80} />
+              <p className="text-[10px] text-gray-500 mt-1">Aparece abaixo do logo animado ao entrar no sistema.</p>
+            </div>
+            <div>
+              <label className="text-xs font-bold opacity-60 uppercase tracking-wider block mb-1">Texto do rodapé</label>
+              <textarea value={config.footerText || ''} onChange={e => setConfig({...config, footerText: e.target.value})} className="w-full min-h-[92px] p-3 border border-gray-200 rounded-xl outline-none text-sm bg-gray-50 focus:bg-white focus:border-blue-400 font-medium resize-none" placeholder="Texto que aparece no rodapé do painel. Deixe em branco para ocultar." maxLength={180} />
             </div>
           </div>
           
