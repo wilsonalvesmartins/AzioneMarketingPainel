@@ -17,6 +17,52 @@ const formatDriveLink = (url) => {
   return url.replace(/\/view.*$/, '/preview').replace(/\/edit.*$/, '/preview');
 };
 
+const getDriveFileId = (url) => {
+  if (typeof url !== 'string' || !url) return '';
+  const value = url.trim();
+  const patterns = [
+    /\/file\/d\/([^/]+)/i,
+    /[?&]id=([^&]+)/i,
+    /\/uc\?export=[^&]+&id=([^&]+)/i
+  ];
+  const match = patterns.map(pattern => value.match(pattern)).find(Boolean);
+  return match ? decodeURIComponent(match[1]) : '';
+};
+
+const getMediaCoverUrl = (url) => {
+  if (typeof url !== 'string' || !url.trim()) return '';
+  const value = url.trim();
+  const driveId = getDriveFileId(value);
+  if (driveId) return `https://drive.google.com/thumbnail?id=${driveId}&sz=w1000`;
+  if (/^data:image\//i.test(value)) return value;
+  if (/\.(png|jpe?g|webp|gif|avif)(\?.*)?$/i.test(value)) return value;
+  if (/^https?:\/\//i.test(value)) return value;
+  return '';
+};
+
+const getCardCoverUrl = (card) => {
+  const candidates = card?.isCarousel ? safeArray(card.carousel) : [card?.link];
+  return getMediaCoverUrl(candidates.find(link => typeof link === 'string' && link.trim()) || '');
+};
+
+const updateFavicon = (logoUrl) => {
+  const selector = 'link[rel="icon"][data-dynamic-favicon="true"]';
+  const existing = document.querySelector(selector);
+  const cleanLogoUrl = typeof logoUrl === 'string' ? logoUrl.trim() : '';
+
+  if (!cleanLogoUrl) {
+    existing?.remove();
+    return;
+  }
+
+  const faviconUrl = getMediaCoverUrl(cleanLogoUrl) || cleanLogoUrl;
+  const link = existing || document.createElement('link');
+  link.rel = 'icon';
+  link.href = faviconUrl;
+  link.dataset.dynamicFavicon = 'true';
+  if (!existing) document.head.appendChild(link);
+};
+
 // --- NOMENCLATURA DE CARGOS ---
 const getDisplayRole = (role) => {
   if (role === 'empresa') return 'Cliente Completo';
@@ -208,6 +254,8 @@ const parseContactsCsv = (csv) => {
   }).filter((contact) => contact.name && contact.phone);
 };
 
+const PERSIST_DEBOUNCE_MS = 900;
+
 // --- HOOK DE PERSISTÊNCIA NA VPS (REESCRITO PARA GARANTIR SINCRONIA MULTI-DISPOSITIVOS) ---
 function usePersistentState(key, initialValue) {
   const [state, setState] = useState(() => {
@@ -218,39 +266,97 @@ function usePersistentState(key, initialValue) {
   });
   
   const [isLoaded, setIsLoaded] = useState(false);
+  const saveTimerRef = useRef(null);
+  const saveAbortRef = useRef(null);
+  const lastSavedRef = useRef('');
+  const mountedRef = useRef(true);
+  const apiAvailableRef = useRef(true);
+
+  const persistValue = (value, immediate = false) => {
+    let serialized = '';
+    try {
+      serialized = JSON.stringify(value);
+      localStorage.setItem(`azione_${key}`, serialized);
+    } catch (error) {
+      console.error(`Erro ao preparar dados de ${key}:`, error);
+      return;
+    }
+
+    if (serialized === lastSavedRef.current) return;
+    if (!apiAvailableRef.current) return;
+
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      saveAbortRef.current?.abort();
+      const controller = new AbortController();
+      saveAbortRef.current = controller;
+
+      fetch(`/api/data/${key}`, { 
+        method: 'POST', 
+        headers: { 'Content-Type': 'application/json' }, 
+        body: JSON.stringify({ data: value }),
+        signal: controller.signal
+      })
+        .then((res) => {
+          if (!res.ok) {
+            if (res.status === 404) apiAvailableRef.current = false;
+            throw new Error(`HTTP ${res.status}`);
+          }
+          lastSavedRef.current = serialized;
+          if (saveAbortRef.current === controller) saveAbortRef.current = null;
+        })
+        .catch(e => {
+          if (e.name === 'AbortError') return;
+          if (!apiAvailableRef.current) return;
+          console.error("Erro de rede salvando na VPS:", e);
+        });
+    }, immediate ? 0 : PERSIST_DEBOUNCE_MS);
+  };
 
   useEffect(() => {
+    mountedRef.current = true;
     fetch(`/api/data/${key}`)
-      .then(res => { if (!res.ok) throw new Error(); return res.json(); })
+      .then(res => {
+        const contentType = res.headers.get('content-type') || '';
+        if (!res.ok || !contentType.includes('application/json')) {
+          if (res.status === 404 || !contentType.includes('application/json')) apiAvailableRef.current = false;
+          throw new Error('API indisponivel');
+        }
+        return res.json();
+      })
       .then(data => {
+        if (!mountedRef.current) return;
         if (data && data.data !== undefined && data.data !== null) {
           setState(data.data);
-          localStorage.setItem(`azione_${key}`, JSON.stringify(data.data));
+          const serialized = JSON.stringify(data.data);
+          lastSavedRef.current = serialized;
+          localStorage.setItem(`azione_${key}`, serialized);
         } else {
           const local = localStorage.getItem(`azione_${key}`);
           const dataToPush = local ? JSON.parse(local) : initialValue;
           setState(dataToPush);
-          fetch(`/api/data/${key}`, { 
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: dataToPush }) 
-          });
+          persistValue(dataToPush, true);
         }
         setIsLoaded(true);
       })
       .catch(err => {
+        if (!mountedRef.current) return;
         setIsLoaded(true);
       });
+
+    return () => {
+      mountedRef.current = false;
+      if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+      saveAbortRef.current?.abort();
+    };
   }, [key]);
 
   const setPersistentState = (newValue) => {
-    const valueToStore = typeof newValue === 'function' ? newValue(state) : newValue;
-    setState(valueToStore);
-    localStorage.setItem(`azione_${key}`, JSON.stringify(valueToStore));
-    
-    fetch(`/api/data/${key}`, { 
-      method: 'POST', 
-      headers: { 'Content-Type': 'application/json' }, 
-      body: JSON.stringify({ data: valueToStore }) 
-    }).catch(e => console.error("Erro de rede salvando na VPS:", e));
+    setState((previousValue) => {
+      const valueToStore = typeof newValue === 'function' ? newValue(previousValue) : newValue;
+      persistValue(valueToStore);
+      return valueToStore;
+    });
   };
 
   return [state, setPersistentState, isLoaded];
@@ -288,11 +394,20 @@ export default function App() {
 
   const showToast = (msg) => setToast(msg);
 
+  const safeConf = { ...defaultConfig, ...config };
+
+  useEffect(() => {
+    document.title = safeConf.companyName?.trim() || 'Painel';
+  }, [safeConf.companyName]);
+
+  useEffect(() => {
+    updateFavicon(safeConf.logo);
+  }, [safeConf.logo]);
+
   if (!uLoad || !kLoad || !rLoad || !fLoad || !dLoad || !cLoad || !dcLoad || !dcrLoad || !dcpLoad || !dcfgLoad) {
     return <div className="min-h-screen flex items-center justify-center bg-gray-50"><div className="animate-pulse text-xl font-bold text-gray-500">Conectando ao servidor...</div></div>;
   }
 
-  const safeConf = { ...defaultConfig, ...config };
   const appStyles = {
     backgroundColor: safeConf.bgColor,
     color: safeConf.textColor,
@@ -329,7 +444,7 @@ export default function App() {
     return (
       <div className="min-h-screen flex items-center justify-center p-4 transition-colors duration-500 relative overflow-hidden" style={{ ...appStyles, '--accent': safeConf.color }}>
         <div className="absolute inset-0 pointer-events-none opacity-70" style={{ backgroundImage: `linear-gradient(120deg, ${safeConf.color}10, transparent 42%, ${safeConf.secondaryColor}12)` }}></div>
-        <div className="bg-white/90 backdrop-blur-xl p-8 rounded-2xl shadow-2xl shadow-gray-900/10 w-full max-w-md text-center border border-white/70 animate-panel-in relative">
+        <div className="bg-white/95 p-8 rounded-2xl shadow-xl shadow-gray-900/10 w-full max-w-md text-center border border-white/70 animate-panel-in relative">
           {safeConf.logo ? <img src={safeConf.logo} alt="Logo" className="h-20 mx-auto mb-6 object-contain drop-shadow-sm" /> : <h1 className="text-3xl font-black mb-2" style={{ color: safeConf.color }}>{safeConf.companyName}</h1>}
           <p className="text-sm font-semibold text-gray-400 mb-6">Entre para gerenciar sua operação</p>
           <form onSubmit={handleLogin} className="space-y-4">
@@ -378,7 +493,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col md:flex-row transition-colors duration-500 font-sans bg-fixed" style={appStyles}>
-      <aside className="bg-white/85 backdrop-blur-xl border-r border-white/60 md:w-72 flex-shrink-0 flex flex-col justify-between shadow-xl shadow-gray-900/5 z-20" style={{ borderTop: `5px solid ${safeConf.color}` }}>
+      <aside className="bg-white/95 border-r border-white/70 md:w-72 flex-shrink-0 flex flex-col justify-between shadow-sm z-20" style={{ borderTop: `5px solid ${safeConf.color}` }}>
         <div className="p-5 md:p-6">
           <div className="flex items-center gap-3 mb-8 overflow-hidden">
             {safeConf.logo ? <img src={safeConf.logo} alt="Logo" className="h-11 flex-shrink-0 object-contain drop-shadow-sm" /> : <div className="w-11 h-11 rounded-xl flex-shrink-0 flex items-center justify-center text-white font-black text-lg shadow-lg shadow-gray-900/10" style={{ backgroundColor: safeConf.color }}>{brandInitials}</div>}
@@ -714,7 +829,7 @@ function KanbanView({ data, setData, user, config, showToast, openCardId, setOpe
       <div className="flex gap-4 overflow-x-auto pb-6 flex-1 items-stretch snap-x custom-scrollbar">
         {columns.map(col => (
           <div key={col} 
-               className="bg-white/40 backdrop-blur-md border border-gray-200/50 min-w-[300px] w-[300px] rounded-2xl p-4 flex flex-col h-full snap-start shadow-sm" 
+               className="bg-white/80 border border-gray-200/70 min-w-[300px] w-[300px] rounded-2xl p-4 flex flex-col h-full snap-start shadow-sm" 
                onDragOver={onDragOver} 
                onDrop={(e) => onDropKanban(e, col)}>
             <div className="flex justify-between items-center mb-4 pb-2 border-b border-gray-200/50">
@@ -731,7 +846,13 @@ function KanbanView({ data, setData, user, config, showToast, openCardId, setOpe
                      onClick={() => setActiveCard(card)} 
                      className="kanban-card bg-white p-4 rounded-xl shadow-sm border border-gray-100 cursor-grab active:cursor-grabbing hover:shadow-md hover:border-blue-300 transition-all group relative"
                      data-id={card.id}>
+                  <KanbanCardCover card={card} />
                   <h4 className="font-bold text-gray-800 mb-2 group-hover:text-blue-600 transition-colors">{card.title}</h4>
+                  {card.isCarousel && safeArray(card.carousel).filter(Boolean).length > 0 && (
+                    <span className="inline-flex items-center gap-1 text-[10px] font-black uppercase tracking-wider text-blue-600 bg-blue-50 border border-blue-100 px-2 py-1 rounded-md">
+                      <Image size={12} /> {safeArray(card.carousel).filter(Boolean).length} slides
+                    </span>
+                  )}
                   <div className="flex items-center justify-between text-xs font-semibold text-gray-400 mt-3 pt-3 border-t border-gray-50">
                     {card.date ? <span className="flex items-center gap-1"><Calendar size={12}/> {new Date(card.date).toLocaleDateString('pt-BR')}</span> : <span>Sem data</span>}
                     <span className="flex items-center gap-1 bg-gray-50 px-2 py-1 rounded-md"><MessageSquare size={12}/> {safeArray(card.comments).length}</span>
@@ -766,6 +887,39 @@ function KanbanView({ data, setData, user, config, showToast, openCardId, setOpe
   );
 }
 
+function KanbanCardCover({ card }) {
+  const coverUrl = getCardCoverUrl(card);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [coverUrl]);
+
+  if (!coverUrl) return null;
+
+  if (failed) {
+    return (
+      <div className="-m-4 mb-3 h-28 rounded-t-xl bg-gray-100 border-b border-gray-100 flex items-center justify-center text-gray-400">
+        <div className="flex items-center gap-2 text-xs font-black uppercase tracking-wider">
+          <Image size={16} /> Mídia anexada
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="-m-4 mb-3 h-36 rounded-t-xl overflow-hidden bg-gray-100 border-b border-gray-100">
+      <img
+        src={coverUrl}
+        alt={`Capa do card ${card.title || ''}`.trim()}
+        loading="lazy"
+        onError={() => setFailed(true)}
+        className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105"
+      />
+    </div>
+  );
+}
+
 function CardModal({ card, user, config, onClose, onSave, onDelete, showToast }) {
   const [draft, setDraft] = useState({ ...card, comments: safeArray(card.comments), carousel: safeArray(card.carousel) });
   const [commentText, setCommentText] = useState('');
@@ -794,7 +948,7 @@ function CardModal({ card, user, config, onClose, onSave, onDelete, showToast })
   };
 
   return (
-    <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+    <div className="fixed inset-0 bg-gray-950/60 flex items-center justify-center p-4 z-50">
       <div className="bg-white text-gray-800 rounded-2xl w-full max-w-5xl max-h-[90vh] flex flex-col shadow-2xl border border-white/20">
         <div className="p-5 border-b border-gray-100 flex justify-between items-center bg-gray-50 rounded-t-2xl flex-shrink-0">
           <h2 className="text-xl font-black">Detalhes do Card</h2>
@@ -836,7 +990,7 @@ function CardModal({ card, user, config, onClose, onSave, onDelete, showToast })
               </div>
               
               {!draft.isCarousel ? (
-                <input disabled={!canEditCore} value={draft.link} placeholder="Cole o link do Google Drive" onChange={e => setDraft({...draft, link: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:border-blue-500 bg-white shadow-inner mb-2 text-sm" />
+                <input aria-label="Link da mídia" disabled={!canEditCore} value={draft.link} placeholder="Cole o link do Google Drive" onChange={e => setDraft({...draft, link: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none focus:border-blue-500 bg-white shadow-inner mb-2 text-sm" />
               ) : (
                 <div className="space-y-2">
                   {draft.carousel.map((link, i) => (
@@ -931,7 +1085,7 @@ function CalendarView({ data, config, onOpenCard }) {
         <h1 className="text-3xl font-black">Cronograma de Postagens</h1>
         <p className="text-sm font-medium opacity-70 mt-1">Visualize os conteúdos com data marcada para ir ao ar.</p>
       </div>
-      <div className="bg-white/60 backdrop-blur-md p-6 rounded-3xl shadow-sm border border-gray-200/50">
+      <div className="bg-white/85 p-6 rounded-3xl shadow-sm border border-gray-200/70">
         <div className="space-y-4">
           {progCards.length === 0 && (
             <div className="text-center py-12">
@@ -1696,7 +1850,7 @@ function FinanceView({ data, setData, user, config, showToast }) {
         )}
       </div>
 
-      <div className="bg-white/60 backdrop-blur-md rounded-3xl shadow-sm border border-gray-200/50 overflow-hidden overflow-x-auto">
+    <div className="bg-white/85 rounded-3xl shadow-sm border border-gray-200/70 overflow-hidden overflow-x-auto">
         <table className="w-full text-left border-collapse min-w-[600px]">
           <thead>
             <tr className="bg-gray-100/50 text-sm uppercase tracking-wider font-bold opacity-70 border-b border-gray-200/50">
@@ -1735,7 +1889,7 @@ function FinanceView({ data, setData, user, config, showToast }) {
       </div>
 
       {editingFin && (
-        <div className="fixed inset-0 bg-gray-900/60 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+                <div className="fixed inset-0 bg-gray-950/60 flex items-center justify-center p-4 z-50">
           <div className="bg-white rounded-3xl p-8 w-full max-w-md shadow-2xl space-y-5 text-gray-800">
             <h3 className="text-2xl font-black border-b border-gray-100 pb-4">Detalhes da Cobrança</h3>
             <div>
@@ -1799,7 +1953,7 @@ function DocsView({ data, setData, user, config }) {
         {data.map((doc, idx) => {
           const safeDate = new Date(doc.date?.length === 10 ? `${doc.date}T12:00:00` : doc.date);
           return (
-          <div key={doc.id} className="bg-white/60 backdrop-blur-md p-6 rounded-3xl shadow-sm border border-gray-200/50 flex flex-col gap-4 hover:shadow-md transition-shadow">
+          <div key={doc.id} className="bg-white/85 p-6 rounded-3xl shadow-sm border border-gray-200/70 flex flex-col gap-4 hover:shadow-md transition-shadow">
             <div className="flex items-center justify-between w-full">
               <div className="flex items-center gap-5 w-full pr-2">
                 <div className="w-14 h-14 rounded-2xl flex-shrink-0 flex items-center justify-center shadow-inner" style={{ backgroundColor: `${config.secondaryColor}20`, color: config.secondaryColor }}><FileText size={28}/></div>
@@ -1866,18 +2020,18 @@ function SettingsView({ config, setConfig, users, setUsers, showToast }) {
         <p className="text-sm font-medium opacity-70 mt-1">Ajuste cores globais, links e gerencie os usuários do sistema.</p>
       </div>
       
-      <div className="bg-white/80 backdrop-blur-md p-8 rounded-3xl shadow-sm border border-gray-200/50 space-y-6">
+      <div className="bg-white/90 p-8 rounded-3xl shadow-sm border border-gray-200/70 space-y-6">
         <h2 className="text-xl font-black border-b border-gray-100 pb-3 flex items-center gap-2">🎨 Identidade Visual (White-label)</h2>
         
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <div className="space-y-4">
             <div>
               <label className="text-xs font-bold opacity-60 uppercase tracking-wider block mb-1">Nome Fantasia do Painel</label>
-              <input value={config.companyName} onChange={e => setConfig({...config, companyName: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none font-bold bg-gray-50 focus:bg-white focus:border-blue-400" />
+              <input aria-label="Nome fantasia do painel" value={config.companyName} onChange={e => setConfig({...config, companyName: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none font-bold bg-gray-50 focus:bg-white focus:border-blue-400" />
             </div>
             <div>
               <label className="text-xs font-bold opacity-60 uppercase tracking-wider block mb-1">URL da Logotipo</label>
-              <input value={config.logo} onChange={e => setConfig({...config, logo: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none text-sm bg-gray-50 focus:bg-white focus:border-blue-400" placeholder="Ex: https://..." />
+              <input aria-label="URL da logotipo" value={config.logo} onChange={e => setConfig({...config, logo: e.target.value})} className="w-full p-3 border border-gray-200 rounded-xl outline-none text-sm bg-gray-50 focus:bg-white focus:border-blue-400" placeholder="Ex: https://..." />
             </div>
             <div>
               <label className="text-xs font-bold opacity-60 uppercase tracking-wider block mb-1">Texto inferior da animação</label>
@@ -1899,7 +2053,7 @@ function SettingsView({ config, setConfig, users, setUsers, showToast }) {
         </div>
       </div>
 
-      <div className="bg-white/80 backdrop-blur-md p-8 rounded-3xl shadow-sm border border-gray-200/50 space-y-6">
+      <div className="bg-white/90 p-8 rounded-3xl shadow-sm border border-gray-200/70 space-y-6">
         <h2 className="text-xl font-black border-b border-gray-100 pb-3 flex items-center gap-2">🔗 Motores Externos (Data Studio & IA)</h2>
         <div className="space-y-5">
           <div>
@@ -1920,7 +2074,7 @@ function SettingsView({ config, setConfig, users, setUsers, showToast }) {
         </div>
       </div>
 
-      <div className="bg-white/80 backdrop-blur-md p-8 rounded-3xl shadow-sm border border-gray-200/50 space-y-6">
+      <div className="bg-white/90 p-8 rounded-3xl shadow-sm border border-gray-200/70 space-y-6">
         <h2 className="text-xl font-black border-b border-gray-100 pb-3">👥 Gerenciamento de Acessos</h2>
         <div className="space-y-3">
           {safeArray(users).map((u, i) => (

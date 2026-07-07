@@ -2,6 +2,7 @@ import express from 'express';
 import sqlite3 from 'sqlite3';
 import path from 'path';
 import cors from 'cors';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -16,7 +17,10 @@ app.use(express.json({ limit: '2mb' }));
 // Servir os arquivos estáticos do React (quando em produção)
 
 // Banco de Dados na VPS (Armazenamento Permanente)
-const dbPath = path.join(__dirname, 'data', 'database.sqlite');
+const dataDir = path.join(__dirname, 'data');
+fs.mkdirSync(dataDir, { recursive: true });
+
+const dbPath = path.join(dataDir, 'database.sqlite');
 const db = new sqlite3.Database(dbPath, (err) => {
     if (err) console.error("Erro ao conectar no banco SQLite: ", err);
     else console.log("SQLite conectado com sucesso na VPS!");
@@ -24,10 +28,20 @@ const db = new sqlite3.Database(dbPath, (err) => {
 
 // Inicialização Básica das Tabelas
 db.serialize(() => {
+    db.run(`PRAGMA journal_mode = WAL`);
+    db.run(`PRAGMA synchronous = NORMAL`);
+    db.run(`PRAGMA busy_timeout = 5000`);
     db.run(`CREATE TABLE IF NOT EXISTS data_store (key TEXT PRIMARY KEY, value JSON)`);
 });
 
 // --- ROTAS DA API PARA PERSISTÊNCIA DE DADOS ---
+
+app.get('/api/health', (req, res) => {
+    db.get("SELECT 1 AS ok", (err) => {
+        if (err) return res.status(500).json({ ok: false, error: err.message });
+        res.json({ ok: true });
+    });
+});
 
 // Rota para buscar dados do banco
 app.get('/api/data/:key', (req, res) => {
@@ -98,6 +112,20 @@ app.get('*', (req, res) => {
     res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
-app.listen(PORT, '0.0.0.0', () => {
+const server = app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Azione App rodando na porta ${PORT}`);
 });
+
+const shutdown = (signal) => {
+    console.log(`${signal} recebido. Encerrando servidor com segurança...`);
+    server.close(() => {
+        db.close(() => {
+            process.exit(0);
+        });
+    });
+
+    setTimeout(() => process.exit(1), 10000).unref();
+};
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
