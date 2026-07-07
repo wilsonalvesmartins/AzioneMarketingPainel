@@ -151,6 +151,7 @@ const defaultDocs = [];
 const defaultConfig = { 
   companyName: 'Azione Marketing', logo: '', color: '#EF4444', secondaryColor: '#991B1B', bgColor: '#F3F4F6', textColor: '#1F2937', geminiKey: '',
   lookerStudioUrl: '', showDataStudioToClient: true,
+  showDisparador: true,
   splashSubtitle: 'Um painel Azione',
   footerText: 'Este é um app oficial Azione Marketing, todos os direitos reservados!'
 };
@@ -404,6 +405,10 @@ export default function App() {
     updateFavicon(safeConf.logo);
   }, [safeConf.logo]);
 
+  useEffect(() => {
+    if (view === 'disparador' && safeConf.showDisparador === false) setView('kanban');
+  }, [view, safeConf.showDisparador]);
+
   if (!uLoad || !kLoad || !rLoad || !fLoad || !dLoad || !cLoad || !dcLoad || !dcrLoad || !dcpLoad || !dcfgLoad) {
     return <div className="min-h-screen flex items-center justify-center bg-gray-50"><div className="animate-pulse text-xl font-bold text-gray-500">Conectando ao servidor...</div></div>;
   }
@@ -473,11 +478,11 @@ export default function App() {
     { id: 'kanban', label: 'Esteira', icon: <KanbanSquare size={20} />, roles: ['empresa', 'master', 'social media', 'gestor de tráfego', 'visualizador'] },
     { id: 'calendar', label: 'Cronograma', icon: <CalendarDays size={20} />, roles: ['empresa', 'master', 'social media', 'visualizador'] },
     { id: 'traffic', label: 'Dados de Tráfego', icon: <TrendingUp size={20} />, roles: ['empresa', 'master', 'gestor de tráfego', 'visualizador'] },
-    { id: 'disparador', label: 'Disparador', icon: <Send size={20} />, roles: ['master'] },
+    { id: 'disparador', label: 'Disparador', icon: <Send size={20} />, roles: ['master'], enabled: safeConf.showDisparador !== false },
     { id: 'finance', label: 'Financeiro', icon: <DollarSign size={20} />, roles: ['empresa', 'master', 'financeiro'] },
     { id: 'docs', label: 'Documentos', icon: <FileText size={20} />, roles: ['empresa', 'master', 'financeiro'] },
     { id: 'settings', label: 'Configurações', icon: <Settings size={20} />, roles: ['master'] },
-  ].filter(item => item.roles.includes(user.role));
+  ].filter(item => item.roles.includes(user.role) && item.enabled !== false);
 
   const viewDetails = {
     kanban: { title: 'Esteira de Conteúdo', subtitle: 'Acompanhe criação, aprovação e publicação em um só fluxo.' },
@@ -543,7 +548,7 @@ export default function App() {
           {view === 'kanban' && <KanbanView data={safeArray(kanban)} setData={setKanban} user={user} config={safeConf} showToast={showToast} openCardId={openCardId} setOpenCardId={setOpenCardId} />}
           {view === 'calendar' && <CalendarView data={safeArray(kanban)} config={safeConf} onOpenCard={(id) => { setView('kanban'); setOpenCardId(id); }} />}
           {view === 'traffic' && <TrafficView data={safeArray(reports)} setData={setReports} user={user} config={safeConf} setConfig={setConfig} showToast={showToast} />}
-          {view === 'disparador' && <DisparadorView contacts={safeArray(disparadorContacts)} setContacts={setDisparadorContacts} creatives={safeArray(disparadorCreatives)} setCreatives={setDisparadorCreatives} campaigns={safeArray(disparadorCampaigns)} setCampaigns={setDisparadorCampaigns} disparadorConfig={{ ...defaultDisparadorConfig, ...safeObject(disparadorConfig) }} setDisparadorConfig={setDisparadorConfig} config={safeConf} showToast={showToast} />}
+          {view === 'disparador' && safeConf.showDisparador !== false && <DisparadorView contacts={safeArray(disparadorContacts)} setContacts={setDisparadorContacts} creatives={safeArray(disparadorCreatives)} setCreatives={setDisparadorCreatives} campaigns={safeArray(disparadorCampaigns)} setCampaigns={setDisparadorCampaigns} disparadorConfig={{ ...defaultDisparadorConfig, ...safeObject(disparadorConfig) }} setDisparadorConfig={setDisparadorConfig} config={safeConf} showToast={showToast} />}
           {view === 'finance' && <FinanceView data={safeArray(finances)} setData={setFinances} user={user} config={safeConf} showToast={showToast} />}
           {view === 'docs' && <DocsView data={safeArray(docs)} setData={setDocs} user={user} config={safeConf} />}
           {view === 'settings' && <SettingsView config={safeConf} setConfig={setConfig} users={safeArray(users)} setUsers={setUsers} showToast={showToast} />}
@@ -2050,6 +2055,23 @@ function SettingsView({ config, setConfig, users, setUsers, showToast }) {
             <HexInput label="Fundo Global" value={config.bgColor} onChange={v => setConfig({...config, bgColor: v})} />
             <HexInput label="Texto / Contraste" value={config.textColor} onChange={v => setConfig({...config, textColor: v})} />
           </div>
+        </div>
+      </div>
+
+      <div className="bg-white/90 p-8 rounded-3xl shadow-sm border border-gray-200/70 space-y-6">
+        <h2 className="text-xl font-black border-b border-gray-100 pb-3 flex items-center gap-2">Módulos do Painel</h2>
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-gray-50 border border-gray-100 rounded-2xl p-5">
+          <div>
+            <h3 className="font-black text-gray-800">Disparador WhatsApp</h3>
+            <p className="text-sm font-medium text-gray-500 mt-1">Controle se o módulo Disparador aparece no menu do master.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setConfig({ ...config, showDisparador: config.showDisparador === false })}
+            className={`w-full md:w-auto px-5 py-3 rounded-xl font-black text-sm border transition-colors ${config.showDisparador !== false ? 'bg-green-600 text-white border-green-600' : 'bg-white text-gray-500 border-gray-200 hover:bg-gray-50'}`}
+          >
+            {config.showDisparador !== false ? 'Habilitado' : 'Desabilitado'}
+          </button>
         </div>
       </div>
 
