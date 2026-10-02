@@ -22,9 +22,10 @@ COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 
 COPY server.js ./
+COPY server ./server
 COPY --from=build /app/dist ./dist
 
-RUN mkdir -p /app/data && chown -R node:node /app
+RUN mkdir -p /app/data /app/imports && chown -R node:node /app
 USER node
 
 EXPOSE 3000

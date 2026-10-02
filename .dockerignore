@@ -1,7 +1,11 @@
 node_modules
 dist
 data
+imports/*
+!imports/.gitkeep
 *.log
 .env
 .git
 npm-debug.log*
+azione-client-hub-v2
+docs

@@ -4,6 +4,11 @@ data/*.sqlite
 data/*.sqlite-journal
 data/*.sqlite-wal
 data/*.sqlite-shm
+.data/
+imports/*
+!imports/.gitkeep
 .env
+.env.*
+!.env.example
 *.log
 npm-debug.log*
